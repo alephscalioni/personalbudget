@@ -1,0 +1,775 @@
+import {
+  sum,
+  expense,
+  monthSummary,
+  competenceMonth,
+  budgetSummary,
+  monthSequence,
+  csvCell,
+} from "./finance.js";
+import {
+  esc,
+  icon,
+  amount,
+  money,
+  monthName,
+  dateName,
+  percent,
+  progress,
+  empty,
+  api,
+  download,
+} from "./ui.js";
+
+const pages = {
+  overview: "Visão geral",
+  transactions: "Transações",
+  budget: "Orçamento",
+  accounts: "Contas e cartões",
+  goals: "Metas",
+  settings: "Ajustes",
+};
+const mobileNames = {
+  overview: "Início",
+  transactions: "Transações",
+  budget: "Orçamento",
+  accounts: "Contas",
+  goals: "Metas",
+  settings: "Ajustes",
+};
+const state = {
+  data: null,
+  transactions: [],
+  month: "",
+  page: "overview",
+  search: "",
+  kind: "all",
+  institution: "all",
+  group: "all",
+  pagination: 1,
+};
+const content = document.querySelector("#content");
+const modal = document.querySelector("#modal");
+let toastTimer;
+const chartColor = [
+  "#435571",
+  "#7288aa",
+  "#9db2d2",
+  "#bdcde4",
+  "#a5b0c0",
+  "#dae1eb",
+];
+let privateMode = false;
+try {
+  privateMode = localStorage.getItem("budget-private") === "true";
+} catch {}
+function privacy() {
+  document.body.classList.toggle("private", privateMode);
+  const button = document.querySelector("#privacy");
+  button.innerHTML = icon("eye");
+  button.setAttribute("aria-pressed", String(privateMode));
+  button.setAttribute(
+    "aria-label",
+    privateMode ? "Mostrar valores" : "Ocultar valores",
+  );
+}
+privacy();
+document.querySelector("#privacy").onclick = () => {
+  privateMode = !privateMode;
+  try {
+    localStorage.setItem("budget-private", String(privateMode));
+  } catch {}
+  privacy();
+};
+function toast(message) {
+  const el = document.querySelector("#toast");
+  el.textContent = message;
+  el.classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("visible"), 4500);
+}
+function options(items, selected) {
+  return items
+    .map(
+      ([value, label]) =>
+        `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`,
+    )
+    .join("");
+}
+function pageHead(title, description, action = "", withMonth = true) {
+  const months = [
+    ...new Set([
+      state.data.finance.gerado_em.slice(0, 7),
+      ...state.transactions.map((t) => t.competence || t.date.slice(0, 7)),
+    ]),
+  ]
+    .sort()
+    .reverse();
+  return `<div class="page-head"><div><div class="eyebrow">SEU DINHEIRO, COM CLAREZA</div><h1>${title}</h1><p>${description}</p></div><div class="head-actions">${
+    withMonth
+      ? `<select id="month" class="month-select" aria-label="Mês de referência">${options(
+          months.map((m) => [m, monthName(m)]),
+          state.month,
+        )}</select>`
+      : ""
+  }${action}</div></div>`;
+}
+function kpi(title, value, note, symbol, featured = false, cls = "") {
+  return `<article class="kpi ${featured ? "featured" : ""}"><div class="kpi-title">${title}${icon(symbol)}</div><div class="kpi-value ${cls}">${amount(value)}</div><div class="kpi-note">${note}</div></article>`;
+}
+function getSummary() {
+  return monthSummary(state.transactions, state.month);
+}
+function getBudget() {
+  return budgetSummary(state.data.budget, getSummary());
+}
+function rowTable(rows, full = false) {
+  if (!rows.length)
+    return empty(
+      "Nenhum lançamento por aqui",
+      "Experimente outro mês ou ajuste os filtros.",
+    );
+  return `<div class="table-wrap ${full ? "full" : ""}"><table><thead><tr><th>Descrição</th><th>Categoria</th>${full ? "<th>Instituição</th>" : ""}<th>Data</th><th class="right">Valor</th>${full ? '<th><span class="chart-accessible">Ações</span></th>' : ""}</tr></thead><tbody>${rows
+    .map((t) => {
+      const positive = t.kind === "income" || t.kind === "refund";
+      const signed = positive
+        ? t.amount
+        : t.kind === "expense"
+          ? -t.amount
+          : (t.valor ?? 0);
+      return `<tr><td><div class="transaction-name"><span class="transaction-icon ${positive ? "income" : ""}">${icon(positive ? "down" : t.kind === "other" ? "transactions" : "arrow")}</span><div><b title="${esc(t.description)}">${esc(t.description)}</b><small>${t.manual ? "Registro manual" : esc(t.conta_tipo === "CREDIT" ? "Cartão de crédito" : t.instituicao)}${t.kind === "refund" ? " · Estorno" : t.kind === "other" ? " · Fora do resultado" : ""}</small></div></div></td><td><span class="pill">${esc(t.group)}</span></td>${full ? `<td class="note-small">${esc(t.instituicao)}</td>` : ""}<td class="note-small">${dateName(t.date).slice(0, 5)}${t.competence !== t.date.slice(0, 7) ? `<br><span class="pill">Ref. ${esc(monthName(t.competence, true))}</span>` : ""}</td><td class="right money-cell ${positive ? "positive" : t.kind === "other" ? "neutral" : ""}">${amount(signed)}</td>${full ? `<td>${t.manual ? `<button class="icon-button" data-action="delete-transaction" data-id="${esc(t.id)}" aria-label="Excluir ${esc(t.description)}">×</button>` : `<button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}" aria-label="Ajustar competência de ${esc(t.description)}">Ajustar</button>`}</td>` : ""}</tr>`;
+    })
+    .join("")}</tbody></table></div>`;
+}
+function cashChart() {
+  const months = monthSequence(state.month, 6);
+  const records = months.map((m) => ({
+    ...monthSummary(state.transactions, m),
+    month: m,
+  }));
+  const max = Math.max(
+    1000,
+    ...records.flatMap((r) => [r.income, Math.max(0, r.spending)]),
+  );
+  const scale = Math.ceil(max / 1000) * 1000;
+  return `<div class="chart-wrap"><div class="chart-grid">${[1, 0.75, 0.5, 0.25, 0].map((x) => `<div><small class="money">${Math.round((scale * x) / 1000)} mil</small></div>`).join("")}</div><div class="bar-chart" role="img" aria-label="Receitas e despesas dos últimos seis meses">${records.map((r) => `<div class="bar-pair"><div class="bar" style="height:${(r.income / scale) * 100}%" title="${esc(monthName(r.month))}: receitas"></div><div class="bar out" style="height:${(Math.max(0, r.spending) / scale) * 100}%" title="Despesas"></div><small>${monthName(r.month, true).replace(".", "")}</small></div>`).join("")}</div></div><table class="chart-accessible"><caption>Receitas e despesas por mês</caption><thead><tr><th>Mês</th><th>Receitas</th><th>Despesas</th></tr></thead><tbody>${records.map((r) => `<tr><td>${monthName(r.month)}</td><td>${amount(r.income)}</td><td>${amount(r.spending)}</td></tr>`).join("")}</tbody></table>`;
+}
+function categoryChart(summary) {
+  const sorted = Object.entries(summary.groups)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (!sorted.length)
+    return empty(
+      "Um mês sem despesas",
+      "Os gastos por categoria aparecerão aqui.",
+    );
+  const groups = sorted.slice(0, 5);
+  if (sorted.length > 5)
+    groups.push(["Demais categorias", sum(sorted.slice(5).map(([, v]) => v))]);
+  const total = sum(groups.map(([, v]) => v));
+  let offset = 0;
+  const rings = groups
+    .map(([name, value], i) => {
+      const dash = (value / total) * 100;
+      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="${chartColor[i]}" stroke-width="11" pathLength="100" stroke-dasharray="${Math.max(0, dash - 0.8)} ${100 - Math.max(0, dash - 0.8)}" stroke-dashoffset="${-offset}"><title>${esc(name)}</title></circle>`;
+      offset += dash;
+      return circle;
+    })
+    .join("");
+  return `<div class="donut-layout"><div class="donut"><svg viewBox="0 0 100 100" aria-hidden="true">${rings}</svg><div class="donut-center"><span>Despesas líquidas</span><b>${amount(summary.spending)}</b></div></div></div><div class="category-list">${groups.map(([name, value], i) => `<div class="category-row"><i style="background:${chartColor[i]}"></i><span>${esc(name)}</span><b>${amount(value)}</b></div>`).join("")}</div>`;
+}
+function budgetItem(line) {
+  const ratio = percent(line.spent, line.teto);
+  return `<div class="budget-item"><div class="budget-line"><span>${esc(line.nome)}</span><span>${amount(line.spent)} <small>/ ${amount(line.teto)}</small></span></div>${progress(line.spent, line.teto, line.spent > line.teto ? "over" : ratio > 80 ? "warn" : "")}<div class="budget-sub"><span>${line.spent > line.teto ? "Acima do limite" : `${Math.round(ratio)}% utilizado`}</span><span>${amount(Math.abs(line.teto - line.spent))} ${line.spent > line.teto ? "acima" : "restantes"}</span></div></div>`;
+}
+function overview() {
+  const d = state.data.finance,
+    s = getSummary(),
+    b = getBudget();
+  const latest = state.data.finance.gerado_em.slice(0, 7) === state.month;
+  const savingRate = s.income ? Math.round((s.balance / s.income) * 100) : null;
+  const over = b.lines.filter((l) => l.spent > l.teto).length;
+  const recent = s.rows.filter((t) => t.kind !== "other").slice(0, 5);
+  return (
+    pageHead(
+      "Seu dinheiro, em perspectiva.",
+      "Tudo o que você precisa para acompanhar sua vida financeira.",
+      `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
+    ) +
+    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, `<span class="dot"></span> Posição de ${dateName(d.gerado_em)}`, "overview", true)}${kpi("Receitas do mês", s.income, "Entradas identificadas no extrato", "down", false, "positive")}${kpi("Despesas do mês", s.spending, "Consumo, já descontados os estornos", "arrow")}${kpi("Resultado do mês", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas no período`, "leaf", false, s.balance < 0 ? "negative" : "")}</div>
+ <div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>Entradas e saídas</h2><p>Seu movimento ao longo dos meses</p></div><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>${latest ? "Mês atual em andamento" : "Mês selecionado"} · resultado por competência</span><a class="text-button" href="#transactions">Ver transações ↗</a></div></section>
+ <section class="panel"><div class="panel-head"><div><h2>Para onde vai seu dinheiro</h2><p>Distribuição dos gastos do mês</p></div><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
+ <div class="insight">${icon("leaf")}<div><b>${b.remaining >= 0 ? "Seu planejamento tem espaço para respirar." : "Hora de dar atenção ao orçamento."}</b><p>${b.remaining >= 0 ? `Restam ${amount(b.remaining)} no limite mensal.` : `O consumo supera o limite em ${amount(-b.remaining)}.`} ${over ? `${over} ${over === 1 ? "categoria passou" : "categorias passaram"} do limite.` : "Acompanhe os limites por categoria."} Inclui VA/VR estimado.</p></div><a class="text-button" href="#budget">Revisar orçamento →</a></div>
+ <section class="panel transactions-panel"><div class="panel-head"><div><h2>Últimas transações</h2><p>Os movimentos mais recentes do mês</p></div><a class="text-button" href="#transactions">Ver todas →</a></div>${rowTable(recent)}</section>
+ <section class="panel overview-budget"><div class="panel-head"><div><h2>De olho no orçamento</h2><p>Seus limites, sempre por perto</p></div><a class="text-button" href="#budget">Detalhes ↗</a></div><div class="budget-items">${b.lines
+   .filter((l) => l.grupos.length)
+   .sort(
+     (a, b) =>
+       (b.teto ? b.spent / b.teto : 1) - (a.teto ? a.spent / a.teto : 1),
+   )
+   .slice(0, 4)
+   .map(budgetItem)
+   .join(
+     "",
+   )}</div><div class="budget-note">${icon("leaf")} Meta mensal de poupança: ${amount(state.data.budget.monthly_saving)}</div></section></div>
+ <p class="info-note">Patrimônio é a posição do último consolidado, incluindo posições declaradas. O resultado mensal exclui transferências próprias, aplicações, pagamento de fatura e eventos patrimoniais identificados. Valores manuais entram no resultado, sem alterar o saldo bancário.</p>`
+  );
+}
+function filteredTransactions() {
+  return getSummary().rows.filter((t) => {
+    const query = state.search.toLocaleLowerCase("pt-BR");
+    return (
+      (state.kind === "all" || t.kind === state.kind) &&
+      (state.institution === "all" || t.instituicao === state.institution) &&
+      (state.group === "all" || t.group === state.group) &&
+      [t.description, t.group, t.instituicao, t.note].some((v) =>
+        String(v || "")
+          .toLocaleLowerCase("pt-BR")
+          .includes(query),
+      )
+    );
+  });
+}
+function transactionResults() {
+  const rows = filteredTransactions(),
+    pagesCount = Math.max(1, Math.ceil(rows.length / 20));
+  state.pagination = Math.min(state.pagination, pagesCount);
+  const start = (state.pagination - 1) * 20;
+  return (
+    rowTable(rows.slice(start, start + 20), true) +
+    `<div class="pagination"><span>${rows.length ? `${start + 1}–${Math.min(start + 20, rows.length)} de ${rows.length}` : "0"} lançamentos</span><div><button class="button small" data-action="previous" ${state.pagination === 1 ? "disabled" : ""}>←</button><span>${state.pagination} / ${pagesCount}</span><button class="button small" data-action="next" ${state.pagination === pagesCount ? "disabled" : ""}>→</button></div></div>`
+  );
+}
+function transactions() {
+  const s = getSummary();
+  return (
+    pageHead(
+      "Cada movimento, no seu lugar.",
+      "Filtre por competência, preservando a data original de cada movimento.",
+      `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
+    ) +
+    `<div class="metric-strip"><div class="panel"><span>Receitas</span><strong class="positive">${amount(s.income)}</strong></div><div class="panel"><span>Despesas líquidas</span><strong>${amount(s.spending)}</strong></div><div class="panel"><span>Resultado</span><strong class="${s.balance < 0 ? "negative" : "positive"}">${amount(s.balance)}</strong></div></div>
+ <section class="panel"><div class="panel-head"><div><h2>Seu extrato</h2><p>Todos os movimentos, inclusive os que não compõem o resultado.</p></div><button class="text-button" data-action="export">Exportar CSV ↓</button></div><div class="filters"><label class="search-input">${icon("search")}<input type="search" id="search" placeholder="Buscar descrição, categoria…" aria-label="Buscar transações" value="${esc(state.search)}"></label><select id="kind" aria-label="Tipo de transação">${options(
+   [
+     ["all", "Todos os tipos"],
+     ["expense", "Despesas"],
+     ["income", "Receitas"],
+     ["refund", "Estornos"],
+     ["other", "Outras movimentações"],
+   ],
+   state.kind,
+ )}</select><select id="institution" aria-label="Instituição">${options([["all", "Todas as instituições"], ...[...new Set(state.transactions.map((t) => t.instituicao))].sort().map((i) => [i, i])], state.institution)}</select><select id="group" aria-label="Categoria">${options([["all", "Todas as categorias"], ...[...new Set(state.transactions.map((t) => t.group))].sort().map((i) => [i, i])], state.group)}</select></div><div id="transaction-results">${transactionResults()}</div></section>`
+  );
+}
+function budget() {
+  const b = getBudget(),
+    config = state.data.budget;
+  return (
+    pageHead(
+      "Um plano para o seu mês.",
+      "Defina seus limites e acompanhe o que já foi utilizado.",
+      `<button class="button primary" data-action="edit-budget">${icon("settings")} Editar planejamento</button>`,
+    ) +
+    `<div class="metric-strip"><div class="panel"><span>Limite total de consumo</span><strong>${amount(b.limit)}</strong></div><div class="panel"><span>Consumo + VA/VR estimado</span><strong>${amount(b.spent)}</strong></div><div class="panel"><span>${b.remaining < 0 ? "Acima do planejado" : "Disponível no orçamento"}</span><strong class="${b.remaining < 0 ? "negative" : "positive"}">${amount(Math.abs(b.remaining))}</strong></div></div>
+ <div class="insight">${icon("goals")}<div><b>Guardar ${amount(config.monthly_saving)} por mês.</b><p>Renda mensal planejada de ${amount(config.monthly_income)}. VA/VR estimado de ${amount(config.benefits_spending)} incluído em alimentação; não é gasto bancário confirmado.</p></div></div>
+ ${b.unallocated ? `<div class="warning-banner" style="margin-top:18px">Há ${amount(b.unallocated)} em categorias sem limite associado. Esse valor já está incluído no consumo total.</div>` : ""}
+ <h2 class="section-title">Seus limites por categoria <span class="pill">${b.lines.length} limites</span></h2><div class="budget-grid">${b.lines.map((l) => `<article class="panel budget-card"><div class="panel-head"><h3>${esc(l.nome)}</h3><span class="pill ${l.spent > l.teto ? "red" : ""}">${l.spent > l.teto ? "Acima do limite" : Math.round(percent(l.spent, l.teto)) + "%"}</span></div><div class="budget-amount">${amount(l.spent)} <small>de ${amount(l.teto)}</small></div>${progress(l.spent, l.teto, l.spent > l.teto ? "over" : "")}<div class="budget-sub"><span>${l.spent > l.teto ? "Excedido" : "Disponível"}</span><span>${amount(Math.abs(l.teto - l.spent))}</span></div></article>`).join("")}</div><p class="info-note">O planejamento é recorrente e vale para todos os meses. A edição altera os limites do app; os relatórios detalhados mantêm suas premissas originais.</p>`
+  );
+}
+function accounts() {
+  const d = state.data.finance;
+  return (
+    pageHead(
+      "Seu patrimônio, reunido.",
+      "Contas, investimentos e cartões em uma única visão.",
+      `<a class="button" href="/app/dashboard.html" target="_blank" rel="noopener">Relatório detalhado ↗</a>`,
+      false,
+    ) +
+    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, "Ativos menos dívida de cartão", "overview", true)}${kpi("Saldo em contas", d.resumo.caixa, "Última posição disponível", "accounts")}${kpi("Investimentos", d.resumo.investimentos, "Inclui posições declaradas", "leaf")}${kpi("Dívida dos cartões", d.resumo.divida, "Posição informada pelo banco", "budget")}</div>
+ <h2 class="section-title">Suas instituições <span class="pill">Posição de ${dateName(d.gerado_em)}</span></h2><div class="account-grid">${d.instituicoes.map((i) => `<article class="panel"><div class="panel-head"><h2>${esc(i.nome)}</h2>${icon("accounts")}</div><div class="kpi-value">${amount(i.liquido)}</div><small class="muted">Patrimônio líquido</small><div class="account-details"><div><small>Conta</small><b>${amount(i.caixa)}</b></div><div><small>Investimentos</small><b>${amount(i.investimentos)}</b></div><div><small>Cartões</small><b>${amount(i.divida)}</b></div></div><p class="info-note">Status do conector: ${esc(i.status)}</p></article>`).join("")}</div>
+ <h2 class="section-title">Cartões de crédito</h2><div class="account-grid">${d.cartoes.map((c) => `<article class="account-card"><div class="account-head"><span>${esc(c.instituicao)} · ${esc(c.nome)}</span>${icon("accounts")}</div><h3>${amount(c.saldo)}</h3><div class="account-bottom"><div><small>Limite disponível</small><div>${c.disponivel == null ? "Não informado" : amount(c.disponivel)}</div></div><div><small>Vencimento informado</small><div>${dateName(c.vencimento)}</div></div></div></article>`).join("") || empty("Nenhum cartão conectado", "Os cartões serão exibidos quando estiverem no consolidado.")}</div>
+ <h2 class="section-title">Investimentos <span class="pill">${d.investimentos.length} posições</span></h2><section class="panel"><div class="table-wrap"><table><thead><tr><th>Investimento</th><th>Instituição</th><th>Origem</th><th class="right">Saldo</th></tr></thead><tbody>${d.investimentos.map((v) => `<tr><td>${esc(v.nome)}<br><small class="muted">${esc(v.subtipo || v.tipo)}</small></td><td>${esc(v.instituicao)}</td><td><span class="pill ${v.manual ? "warn" : ""}">${v.manual ? "Declarado" : "Open Finance"}</span>${v.manual ? `<br><small class="muted">${dateName(v.referencia)}</small>` : ""}</td><td class="right">${amount(v.saldo)}</td></tr>`).join("")}</tbody></table></div></section><p class="info-note">Posições declaradas não são conciliadas automaticamente. A dívida é o saldo do cartão no consolidado; consulte o relatório detalhado para a composição por ciclo de fatura.</p>`
+  );
+}
+function goals() {
+  const goals = state.data.goals;
+  return (
+    pageHead(
+      "Planos que saem do papel.",
+      "Dê um destino ao dinheiro que você está guardando.",
+      `<button class="button primary" data-action="new-goal">${icon("plus")} Criar meta</button>`,
+      false,
+    ) +
+    `<div class="metric-strip"><div class="panel"><span>Reservado para metas</span><strong>${amount(sum(goals.map((g) => g.saved)))}</strong></div><div class="panel"><span>Objetivo total</span><strong>${amount(sum(goals.map((g) => g.target)))}</strong></div><div class="panel"><span>Metas concluídas</span><strong>${goals.filter((g) => g.saved >= g.target).length} <small class="muted">/ ${goals.length}</small></strong></div></div>
+ ${!goals.length ? `<div class="insight">${icon("leaf")}<div><b>Todo plano começa com um primeiro passo.</b><p>Crie sua reserva, planeje uma viagem ou organize uma conquista. Você escolhe o destino.</p></div></div><br>` : ""}<div class="goal-grid">${goals.map((g) => `<article class="panel goal-card"><div class="goal-symbol">${icon("goals")}</div><h3>${esc(g.name)}</h3><p>${g.deadline ? "Até " + dateName(g.deadline) : "No seu próprio ritmo"}</p><div class="goal-value">${amount(g.saved)}</div><div class="goal-total">de ${amount(g.target)} · ${Math.round(percent(g.saved, g.target))}% concluído</div>${progress(g.saved, g.target)}<div class="budget-sub"><span>${g.saved >= g.target ? "Você chegou lá!" : "Falta " + amount(g.target - g.saved)}</span></div><button class="button" data-action="edit-goal" data-id="${esc(g.id)}">Atualizar progresso →</button></article>`).join("")}<button class="new-goal" data-action="new-goal">${icon("plus")}<b>Uma nova conquista</b><span>Adicionar uma meta pessoal</span></button></div><p class="info-note">Os valores das metas são informados por você. Eles não movimentam contas e não são somados novamente ao patrimônio.</p>`
+  );
+}
+function settings() {
+  const d = state.data;
+  return (
+    pageHead(
+      "Do seu jeito.",
+      "Transparência sobre os dados e controle sobre seu planejamento.",
+      "",
+      false,
+    ) +
+    `<div class="settings-grid"><section class="panel"><h2>Seus dados financeiros</h2><p>O app lê o consolidado mais recente disponível neste computador. Atualizar dados recarrega esse arquivo e reconstrói o relatório; não realiza uma nova coleta nos bancos.</p><div class="settings-row"><span>Última coleta</span><b>${dateName(d.finance.gerado_em)}</b></div><div class="settings-row"><span>Janela do extrato</span><span>${dateName(d.finance.janela[0])} – ${dateName(d.finance.janela[1])}</span></div><div class="settings-row"><span>Instituições</span><span>${d.finance.instituicoes.length}</span></div><div class="settings-row"><span>Transações importadas</span><span>${d.finance.lancamentos.length}</span></div><p class="info-note">Fonte: ${esc(d.source)}</p><button class="button" data-action="refresh">↻ Recarregar consolidado local</button></section>
+ <section class="panel"><h2>Uma cópia do seu planejamento</h2><p>Exporte limites, metas e lançamentos manuais em JSON. Para uma cópia completa do app, preserve também a pasta data e suas configurações financeiras.</p><button class="button primary" data-action="backup">Exportar planejamento ↓</button><p class="info-note">A exportação contém informações pessoais. Guarde o arquivo em um local de sua escolha.</p><h2 style="margin-top:30px">Privacidade na tela</h2><p>Use o ícone de olho na barra superior para ocultar valores enquanto compartilha a tela.</p><button class="button" data-action="privacy">${icon("eye")} ${privateMode ? "Mostrar" : "Ocultar"} valores</button>${state.session?.required ? '<button class="button" data-action="change-password" style="margin-top:12px">Trocar senha</button> <button class="button" data-action="logout" style="margin-top:12px">Sair da conta</button>' : ""}</section>
+ <section class="panel"><h2>Como os números são calculados</h2><p>Receitas e despesas seguem a competência do planejamento. A data bancária original é preservada; salários de fim de mês podem financiar o mês seguinte. Compras no cartão entram uma vez; o pagamento da fatura fica fora do resultado. Estornos reduzem despesas. Transferências próprias, aplicações e eventos patrimoniais identificados também ficam fora.</p><p>O orçamento inclui o consumo estimado de VA/VR informado no planejamento. Lançamentos manuais afetam os totais mensais, mas não atualizam o saldo recebido dos bancos.</p></section><section class="panel"><h2>Relatório para conferência</h2><p>A análise detalhada original continua disponível, com fluxo mensal, parcelas, projeções e reconciliação de caixa. Ela mantém as premissas do gerador original e não incorpora o planejamento salvo neste app.</p><a class="button" href="/app/dashboard.html" target="_blank" rel="noopener">Abrir análise detalhada ↗</a></section></div>`
+  );
+}
+const renderers = { overview, transactions, budget, accounts, goals, settings };
+function render() {
+  state.page =
+    location.hash.slice(1) in pages ? location.hash.slice(1) : "overview";
+  document.title = `${pages[state.page]} · Personal Budget`;
+  document.querySelector("#crumb").textContent = pages[state.page];
+  document.querySelector("#navigation").innerHTML = Object.entries(pages)
+    .map(
+      ([key, label]) =>
+        `<a href="#${key}" class="nav-link ${key === state.page ? "active" : ""}" ${key === state.page ? 'aria-current="page"' : ""} title="${label}">${icon(key)}<span>${innerWidth <= 680 ? mobileNames[key] : label}</span></a>`,
+    )
+    .join("");
+  if (!state.data) return;
+  content.innerHTML = renderers[state.page]();
+  const age = Math.floor(
+    (Date.now() - new Date(state.data.finance.gerado_em).getTime()) / 86400000,
+  );
+  if (age > 2)
+    content.insertAdjacentHTML(
+      "afterbegin",
+      `<div class="warning-banner">O último consolidado é de ${dateName(state.data.finance.gerado_em)} (${age} dias). Os valores refletem essa coleta.</div>`,
+    );
+  document.querySelector("#source").textContent =
+    `Dados de ${dateName(state.data.finance.gerado_em)}`;
+  bindFilters();
+}
+function bindFilters() {
+  document.querySelector("#month")?.addEventListener("change", (event) => {
+    state.month = event.target.value;
+    state.pagination = 1;
+    render();
+  });
+  document.querySelector("#search")?.addEventListener("input", (event) => {
+    state.search = event.target.value;
+    state.pagination = 1;
+    document.querySelector("#transaction-results").innerHTML =
+      transactionResults();
+  });
+  for (const field of ["kind", "institution", "group"])
+    document.querySelector("#" + field)?.addEventListener("change", (event) => {
+      state[field] = event.target.value;
+      state.pagination = 1;
+      document.querySelector("#transaction-results").innerHTML =
+        transactionResults();
+    });
+}
+async function load() {
+  if (location.hash.startsWith("#reset=")) {
+    renderReset(decodeURIComponent(location.hash.slice(7)));
+    return;
+  }
+  const session = await api("session");
+  state.session = session;
+  if (!session.authenticated) {
+    renderLogin(session.configured);
+    return;
+  }
+  if (session.must_change_password) {
+    renderPasswordChange(true);
+    return;
+  }
+  document.querySelector("#refresh").hidden = false;
+  const data = await api("data");
+  const { classifyPayload } = await import("./classifier.js");
+  state.data = data;
+  state.transactions = [
+    ...classifyPayload(data.finance),
+    ...data.manual.map((t) => ({
+      ...t,
+      manual: true,
+      instituicao: "Manual",
+      conta: "Registro manual",
+      conta_tipo: "MANUAL",
+      category: t.group,
+    })),
+  ]
+    .map((t) => {
+      const override = data.overrides?.find((o) => o.id === t.id);
+      if (override) {
+        t = {
+          ...t,
+          ...Object.fromEntries(
+            Object.entries(override).filter(([, value]) => value !== null),
+          ),
+        };
+        t.adjusted = true;
+      }
+      return { ...t, competence: competenceMonth(t, data.budget) };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!state.month) state.month = data.finance.gerado_em.slice(0, 7);
+  render();
+}
+function authScreen(title, description, fields, button, extra = "") {
+  state.data = null;
+  state.transactions = [];
+  document.querySelector("#navigation").innerHTML = "";
+  document.querySelector("#source").textContent = "";
+  document.querySelector("#refresh").hidden = true;
+  content.innerHTML = `<div class="login-shell"><form class="login-card" id="access-form"><span class="brand-icon">▥</span><h1>${title}</h1><p>${description}</p>${fields}<button class="button primary" type="submit">${button}</button><p id="login-error" class="form-error" role="alert"></p>${extra}</form></div>`;
+}
+function accessForm(handler) {
+  document.querySelector("#access-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const button = event.target.querySelector("[type=submit]");
+    button.disabled = true;
+    try {
+      await handler(new FormData(event.target));
+    } catch (error) {
+      const el = document.querySelector("#login-error");
+      if (el) el.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+function renderLogin(configured = true) {
+  authScreen(
+    "Seu espaço, protegido.",
+    configured
+      ? "Entre para acompanhar as finanças de vocês."
+      : "O acesso privado está sendo configurado.",
+    '<label>Usuário<input name="username" autocomplete="username" required autofocus placeholder="alephscalioni ou biancascalioni"></label><label style="margin-top:15px">Senha<input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>',
+    "Entrar no meu espaço →",
+    '<button class="text-button" type="button" data-action="forgot-password" style="margin-top:18px">Esqueci minha senha</button>',
+  );
+  if (!configured)
+    document.querySelector("#access-form button[type=submit]").disabled = true;
+  accessForm(async (f) => {
+    await api("session", "POST", {
+      username: f.get("username"),
+      password: f.get("password"),
+    });
+    await load();
+  });
+}
+function renderPasswordChange(mandatory = false) {
+  authScreen(
+    mandatory ? "Crie sua senha pessoal." : "Trocar minha senha",
+    mandatory
+      ? "Antes de abrir suas finanças, substitua a senha provisória."
+      : "A mudança encerra as outras sessões desta conta.",
+    '<label>Senha atual<input type="password" name="current_password" autocomplete="current-password" required></label><label style="margin-top:15px">Nova senha<input type="password" name="new_password" autocomplete="new-password" required minlength="12" maxlength="256" placeholder="Pelo menos 12 caracteres"></label><label style="margin-top:15px">Confirme a nova senha<input type="password" name="confirmation" autocomplete="new-password" required minlength="12" maxlength="256"></label>',
+    "Salvar nova senha",
+    mandatory
+      ? '<button class="text-button" type="button" data-action="logout">Sair</button>'
+      : '<button class="text-button" type="button" data-action="back-to-app">Voltar</button>',
+  );
+  accessForm(async (f) => {
+    if (f.get("new_password") !== f.get("confirmation"))
+      throw new Error("As novas senhas precisam ser iguais.");
+    await api("password/change", "POST", {
+      current_password: f.get("current_password"),
+      new_password: f.get("new_password"),
+    });
+    await load();
+    toast("Sua senha foi atualizada.");
+  });
+}
+function renderForgot() {
+  authScreen(
+    "Vamos recuperar seu acesso.",
+    "Informe seu usuário. O link será enviado ao e-mail cadastrado.",
+    '<label>Usuário<input name="username" autocomplete="username" required autofocus placeholder="alephscalioni ou biancascalioni"></label>',
+    "Enviar link de recuperação",
+    '<button class="text-button" type="button" data-action="back-to-login">Voltar ao login</button>',
+  );
+  accessForm(async (f) => {
+    const result = await api("password/forgot", "POST", {
+      username: f.get("username"),
+    });
+    document.querySelector("#login-error").textContent = result.message;
+  });
+}
+function renderReset(token) {
+  authScreen(
+    "Uma nova senha.",
+    "Escolha uma senha pessoal com pelo menos 12 caracteres.",
+    '<label>Nova senha<input type="password" name="new_password" autocomplete="new-password" required minlength="12" maxlength="256" autofocus></label><label style="margin-top:15px">Confirme a nova senha<input type="password" name="confirmation" autocomplete="new-password" required minlength="12" maxlength="256"></label>',
+    "Redefinir senha",
+    '<button class="text-button" type="button" data-action="forgot-password">Solicitar outro link</button>',
+  );
+  accessForm(async (f) => {
+    if (f.get("new_password") !== f.get("confirmation"))
+      throw new Error("As senhas precisam ser iguais.");
+    await api("password/reset", "POST", {
+      token,
+      new_password: f.get("new_password"),
+    });
+    history.replaceState(null, "", location.pathname + "#overview");
+    await load();
+    toast("Senha redefinida.");
+  });
+}
+
+function openModal(title, subtitle, body) {
+  modal.innerHTML = `<div class="modal-header"><div><h2 id="modal-title">${title}</h2><p>${subtitle}</p></div><button class="icon-button" data-action="close" aria-label="Fechar">×</button></div>${body}`;
+  modal.showModal();
+}
+function formFooter(label = "Salvar") {
+  return `<p class="form-error" role="alert" id="form-error"></p><div class="form-actions"><button class="button" type="button" data-action="close">Cancelar</button><button class="button primary" type="submit">${label}</button></div>`;
+}
+function bindForm(handler) {
+  modal.querySelector("form").onsubmit = async (event) => {
+    event.preventDefault();
+    const button = event.target.querySelector("[type=submit]");
+    button.disabled = true;
+    try {
+      await handler(new FormData(event.target));
+    } catch (error) {
+      document.querySelector("#form-error").textContent = error.message;
+      button.disabled = false;
+      return;
+    }
+    modal.close();
+    try {
+      await load();
+      toast("Salvo. Seu planejamento está atualizado.");
+    } catch (error) {
+      toast("Registro salvo, mas a tela não atualizou. Recarregue a página.");
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+function classificationForm(id) {
+  const t = state.transactions.find((t) => t.id === id);
+  openModal(
+    "Ajustar competência",
+    "A data e o valor bancários são preservados.",
+    `<form><p class="info-note">${esc(t.description)} · ${dateName(t.date)} · ${amount(t.amount)}</p><div class="form-grid"><label>Tratamento<select name="kind">${options(
+      [
+        ["income", "Receita"],
+        ["expense", "Despesa"],
+        ["refund", "Estorno"],
+        ["other", "Fora do resultado"],
+      ],
+      t.kind,
+    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(t.competence)}" required></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
+  );
+  bindForm(async (f) =>
+    api("transactions/" + id + "/classification", "PUT", {
+      kind: f.get("kind"),
+      competence: f.get("competence"),
+      is_salary: f.get("is_salary") === "true",
+    }),
+  );
+}
+
+function transactionForm() {
+  const groups = [
+    ...new Set(state.data.budget.lines.flatMap((l) => l.grupos)),
+  ].sort();
+  const today = new Date();
+  const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  openModal(
+    "Novo lançamento",
+    "Para receitas e despesas que ainda não estão no extrato.",
+    `<form><div class="form-grid"><label class="full">Descrição<input name="description" required maxlength="180" placeholder="Ex.: almoço, pagamento extra" autofocus></label><label>Tipo<select name="kind"><option value="expense">Despesa</option><option value="income">Receita</option></select></label><label>Valor (R$)<input name="amount" type="number" min="0.01" max="10000000000" step="0.01" required placeholder="0,00"></label><label>Data<input name="date" type="date" value="${date}" required></label><label>Categoria<select name="group">${options(
+      groups.map((g) => [g, g]),
+      "Outros",
+    )}</select></label><label>Competência (opcional)<input name="competence" type="month"></label><label>Origem<select name="is_salary"><option value="false">Movimento comum</option><option value="true">Salário</option></select></label><label class="full">Observação (opcional)<textarea name="note" maxlength="500" placeholder="Um detalhe para lembrar depois"></textarea></label></div><p class="info-note">Este registro entra no resultado mensal, sem alterar o saldo bancário. Se aparecer numa coleta futura, exclua o registro manual para evitar duplicidade.</p>${formFooter("Adicionar lançamento")}</form>`,
+  );
+  bindForm(async (f) => {
+    await api("transactions", "POST", {
+      description: f.get("description"),
+      amount: Number(f.get("amount")),
+      date: f.get("date"),
+      kind: f.get("kind"),
+      group: f.get("group"),
+      note: f.get("note"),
+      competence: f.get("competence") || null,
+      is_salary: f.get("is_salary") === "true",
+    });
+    state.month = competenceMonth(
+      {
+        date: f.get("date"),
+        kind: f.get("kind"),
+        is_salary: f.get("is_salary") === "true",
+        competence: f.get("competence") || null,
+      },
+      state.data.budget,
+    );
+  });
+}
+function goalForm(id) {
+  const goal = state.data.goals.find((g) => g.id === id);
+  openModal(
+    goal ? "Seu objetivo, mais perto." : "Qual é o próximo plano?",
+    "Acompanhe o valor reservado para uma conquista.",
+    `<form><div class="form-grid"><label class="full">Nome da meta<input name="name" required maxlength="80" value="${esc(goal?.name || "")}" placeholder="Ex.: reserva de emergência" autofocus></label><label>Objetivo (R$)<input name="target" type="number" min="0.01" step="0.01" required value="${goal?.target || ""}"></label><label>Já guardado (R$)<input name="saved" type="number" min="0" step="0.01" required value="${goal?.saved || 0}"></label><label class="full">Prazo (opcional)<input name="deadline" type="date" value="${goal?.deadline || ""}"></label></div>${goal ? `<button class="text-button negative" type="button" data-action="delete-goal" data-id="${esc(id)}" style="margin-top:18px">Excluir esta meta</button>` : ""}${formFooter(goal ? "Atualizar meta" : "Criar meta")}</form>`,
+  );
+  bindForm(async (f) =>
+    api(goal ? "goals/" + id : "goals", goal ? "PUT" : "POST", {
+      name: f.get("name"),
+      target: Number(f.get("target")),
+      saved: Number(f.get("saved")),
+      deadline: f.get("deadline") || null,
+    }),
+  );
+}
+function budgetForm() {
+  const b = state.data.budget;
+  openModal(
+    "Um orçamento que faz sentido.",
+    "Limites recorrentes para organizar o consumo de cada mês.",
+    `<form><div class="form-grid"><label>Renda planejada (R$)<input name="monthly_income" type="number" min="0" step="0.01" required value="${b.monthly_income}"></label><label>Meta de poupança (R$)<input name="monthly_saving" type="number" min="0" step="0.01" required value="${b.monthly_saving}"></label><label class="full">Consumo estimado de VA/VR por mês (R$)<input name="benefits_spending" type="number" min="0" step="0.01" required value="${b.benefits_spending}"></label></div><label class="info-note" style="display:block">Salários no fim do mês<select name="salary_next_month" style="width:100%"><option value="true" ${b.salary_next_month !== false ? "selected" : ""}>Usar no orçamento do mês seguinte</option><option value="false" ${b.salary_next_month === false ? "selected" : ""}>Usar no próprio mês do recebimento</option></select></label><label class="info-note">A partir do dia<input name="salary_cutoff_day" type="number" min="1" max="31" value="${b.salary_cutoff_day ?? 25}" style="width:75px;margin-left:12px" required></label><div class="budget-form-list">${b.lines.map((l, i) => `<label>${esc(l.nome)}<input type="number" name="limit-${i}" min="0" step="0.01" value="${l.teto}" required aria-label="Limite de ${esc(l.nome)}"></label>`).join("")}</div>${formFooter("Salvar planejamento")}</form>`,
+  );
+  bindForm(async (f) =>
+    api("budget", "PUT", {
+      salary_next_month: f.get("salary_next_month") === "true",
+      salary_cutoff_day: Number(f.get("salary_cutoff_day")),
+      monthly_income: Number(f.get("monthly_income")),
+      monthly_saving: Number(f.get("monthly_saving")),
+      benefits_spending: Number(f.get("benefits_spending")),
+      lines: b.lines.map((l, i) => ({
+        ...l,
+        teto: Number(f.get("limit-" + i)),
+      })),
+    }),
+  );
+}
+function confirmDelete(kind, id) {
+  const goal = kind === "goals";
+  if (modal.open) modal.close();
+  openModal(
+    goal ? "Excluir esta meta?" : "Excluir o lançamento manual?",
+    goal
+      ? "Os valores nas contas não serão alterados."
+      : "A transação será removida do resultado mensal.",
+    `<form><p class="info-note">Esta ação remove apenas o registro selecionado do planejamento local.</p>${formFooter("Confirmar exclusão")}</form>`,
+  );
+  bindForm(async () => api(kind + "/" + id, "DELETE"));
+}
+async function refresh() {
+  const button = document.querySelector("#refresh");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.innerHTML = "↻ Atualizando…";
+  try {
+    await api("refresh", "POST");
+    await load();
+    toast(
+      "Consolidado local recarregado. Nenhuma coleta bancária foi realizada.",
+    );
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = "↻ <span>Atualizar dados</span>";
+  }
+}
+document.querySelector("#refresh").onclick = refresh;
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-action]");
+  if (!button) return;
+  const action = button.dataset.action;
+  if (action === "logout") {
+    await api("session", "DELETE");
+    renderLogin();
+    return;
+  }
+  try {
+    if (action === "forgot-password") {
+      history.replaceState(null, "", location.pathname);
+      renderForgot();
+    }
+    if (action === "back-to-login") {
+      history.replaceState(null, "", location.pathname);
+      renderLogin();
+    }
+    if (action === "change-password") renderPasswordChange();
+    if (action === "back-to-app") await load();
+    if (action === "new-transaction") transactionForm();
+    if (action === "classify-transaction")
+      classificationForm(button.dataset.id);
+    if (action === "new-goal") goalForm();
+    if (action === "edit-goal") goalForm(button.dataset.id);
+    if (action === "edit-budget") budgetForm();
+    if (action === "close") modal.close();
+    if (action === "reset-classification") {
+      await api(
+        "transactions/" + button.dataset.id + "/classification",
+        "DELETE",
+      );
+      modal.close();
+      await load();
+      toast("Classificação original restaurada.");
+    }
+    if (action === "delete-goal") confirmDelete("goals", button.dataset.id);
+    if (action === "delete-transaction")
+      confirmDelete("transactions", button.dataset.id);
+    if (action === "previous" || action === "next") {
+      state.pagination += action === "next" ? 1 : -1;
+      document.querySelector("#transaction-results").innerHTML =
+        transactionResults();
+    }
+    if (action === "export") {
+      const rows = filteredTransactions();
+      const csv = [
+        [
+          "Data bancária",
+          "Competência",
+          "Descrição",
+          "Categoria",
+          "Instituição",
+          "Tipo",
+          "Valor BRL",
+          "Origem",
+        ],
+        ...rows.map((t) => [
+          t.date,
+          t.competence,
+          t.description,
+          t.group,
+          t.instituicao,
+          t.kind,
+          t.amount.toFixed(2).replace(".", ","),
+          t.manual ? "Manual" : "Open Finance",
+        ]),
+      ]
+        .map((row) => row.map(csvCell).join(";"))
+        .join("\r\n");
+      download("\uFEFF" + csv, `transacoes-${state.month}.csv`);
+      toast(`${rows.length} lançamentos exportados com os filtros atuais.`);
+    }
+    if (action === "backup") {
+      download(
+        JSON.stringify(await api("backup"), null, 2),
+        "personal-budget-planejamento.json",
+        "application/json",
+      );
+      toast("Cópia do planejamento exportada.");
+    }
+    if (action === "refresh") await refresh();
+    if (action === "privacy") {
+      document.querySelector("#privacy").click();
+      render();
+    }
+    if (action === "retry") await load();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+window.addEventListener("hashchange", () => {
+  if (location.hash.startsWith("#reset=")) {
+    load();
+    return;
+  }
+  render();
+  window.scrollTo({ top: 0 });
+});
+load().catch((error) => {
+  content.innerHTML = `<div class="loading-state">${icon("leaf")}<h1>Não foi possível carregar os dados.</h1><p>${esc(error.message)}</p><button class="button primary" data-action="retry">Tentar novamente</button></div>`;
+});

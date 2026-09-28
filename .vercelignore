@@ -1,0 +1,11 @@
+.venv
+.runtime
+.git
+data
+skills
+finance
+backend
+deployment
+frontend/dashboard.html
+**/.env
+**/.env.*

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f4f6f9" />
+    <meta name="color-scheme" content="light" />
+    <title>Personal Budget · Seu dinheiro, com clareza</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%2329436b'/%3E%3Cpath d='M12 28V18m8 10V11m8 17V15' stroke='%23c3d6f1' stroke-width='4'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/app/shell.css" />
+  </head>
+  <body>
+    <a class="skip" href="#content">Ir para o conteúdo</a>
+    <aside class="sidebar">
+      <a href="#overview" class="brand"
+        ><span class="brand-icon">▥</span
+        ><span>personal<span class="brand-second">budget.</span></span></a
+      >
+      <div class="nav-label">SEU ESPAÇO FINANCEIRO</div>
+      <nav aria-label="Navegação principal" id="navigation"></nav>
+      <div class="sidebar-bottom">
+        <div class="local-dot"><i></i> Dados no seu computador</div>
+        <p>Mais clareza para decidir.<br />Mais espaço para viver.</p>
+        <a href="/app/dashboard.html" target="_blank" rel="noopener"
+          >Abrir relatório detalhado ↗</a
+        >
+      </div>
+      <div class="profile">
+        <span class="avatar">EU</span>
+        <div><b>Minhas finanças</b><small>Espaço pessoal</small></div>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <span class="breadcrumb"
+          >Meu espaço <span>/</span> <b id="crumb">Visão geral</b></span
+        >
+        <div class="top-actions">
+          <span class="local-badge">● Local e privado</span
+          ><button
+            class="icon-button"
+            id="privacy"
+            aria-label="Ocultar valores"
+            title="Ocultar valores"
+          ></button
+          ><button class="button small" id="refresh">
+            ↻ <span>Atualizar dados</span>
+          </button>
+        </div>
+      </header>
+      <main id="content" tabindex="-1">
+        <div class="loading-state">
+          <span class="spinner"></span>
+          <h1>Organizando suas finanças…</h1>
+          <p>Carregando seus dados locais.</p>
+        </div>
+      </main>
+      <footer>
+        PERSONAL BUDGET <span>Uma visão mais clara do seu dinheiro.</span
+        ><span id="source"></span>
+      </footer>
+    </div>
+    <dialog id="modal" aria-labelledby="modal-title"></dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app/js/app.js"></script>
+  </body>
+</html>

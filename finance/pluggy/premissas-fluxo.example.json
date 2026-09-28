@@ -1,0 +1,129 @@
+{
+  "renda_mensal": {
+    "aleph_bruto": 0,
+    "aleph_liquido": 0,
+    "bia_bruto_pj": 0,
+    "bia_liquido": 0
+  },
+  "bonus_aleph": {
+    "janelas": [],
+    "tratamento": "renda extraordinária"
+  },
+  "controle_mensal": {
+    "va_alicia": 0,
+    "va_credito": 0,
+    "vr_aleph": 0,
+    "vr_credito": 0,
+    "va_observacao": "Preencha seus benefícios e estimativas."
+  },
+  "orcamento_mensal": {
+    "meta_poupanca": 0,
+    "teto_gastos": 0,
+    "corte_evento_pontual": 3000,
+    "teto_consumo_com_beneficios": 0,
+    "linhas": [
+      {
+        "nome": "Moradia e contas",
+        "teto": 0,
+        "grupos": [
+          "Moradia"
+        ]
+      },
+      {
+        "nome": "Alimentação (inclui VA/VR)",
+        "teto": 0,
+        "grupos": [
+          "Alimentação"
+        ]
+      },
+      {
+        "nome": "Transporte",
+        "teto": 0,
+        "grupos": [
+          "Transporte"
+        ]
+      },
+      {
+        "nome": "Saúde e psicólogas",
+        "teto": 0,
+        "grupos": [
+          "Saúde"
+        ]
+      },
+      {
+        "nome": "MBA, inglês e educação",
+        "teto": 0,
+        "grupos": [
+          "Educação"
+        ]
+      },
+      {
+        "nome": "Assinaturas e infra",
+        "teto": 0,
+        "grupos": [
+          "Assinaturas",
+          "Infra"
+        ]
+      },
+      {
+        "nome": "Pets",
+        "teto": 0,
+        "grupos": [
+          "Pets"
+        ]
+      },
+      {
+        "nome": "Doações",
+        "teto": 0,
+        "grupos": [
+          "Doações"
+        ]
+      },
+      {
+        "nome": "Lazer e viagem",
+        "teto": 0,
+        "grupos": [
+          "Lazer",
+          "Viagem"
+        ]
+      },
+      {
+        "nome": "Compras pessoais",
+        "teto": 0,
+        "grupos": [
+          "Compras"
+        ]
+      },
+      {
+        "nome": "Negócio 3D",
+        "teto": 0,
+        "grupos": [
+          "Negócio 3D"
+        ]
+      },
+      {
+        "nome": "Pessoas e cuidados",
+        "teto": 0,
+        "grupos": [
+          "Pessoas",
+          "Cuidados pessoais"
+        ]
+      },
+      {
+        "nome": "Taxas e outros",
+        "teto": 0,
+        "grupos": [
+          "Serviços e taxas",
+          "Outros",
+          "Transferências"
+        ]
+      },
+      {
+        "nome": "Folga operacional",
+        "teto": 0,
+        "grupos": []
+      }
+    ]
+  },
+  "observacao": "Exemplo sem dados pessoais. Copie para premissas-fluxo.json e preencha seus valores."
+}

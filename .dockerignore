@@ -1,0 +1,15 @@
+.git
+.venv
+.runtime
+.vercel
+skills
+data
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+frontend/dashboard.html
+finance/pluggy/contrapartes.json
+finance/pluggy/mascara.json
+finance/pluggy/posicoes-manuais.json
+finance/pluggy/premissas-fluxo.json

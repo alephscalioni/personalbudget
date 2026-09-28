@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "node scripts/build-frontend.mjs",
+  "installCommand": "echo 'No frontend dependencies'",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {"source": "/api/:path*", "destination": "https://personalbudget-production-f7d7.up.railway.app/api/:path*"},
+    {"source": "/app/js/classifier.js", "destination": "https://personalbudget-production-f7d7.up.railway.app/app/js/classifier.js"},
+    {"source": "/app/dashboard.html", "destination": "https://personalbudget-production-f7d7.up.railway.app/app/dashboard.html"}
+  ],
+  "headers": [{"source": "/(.*)", "headers": [
+    {"key":"Cache-Control", "value":"no-store"},
+    {"key":"X-Content-Type-Options", "value":"nosniff"},
+    {"key":"Referrer-Policy", "value":"no-referrer"},
+    {"key":"X-Frame-Options", "value":"SAMEORIGIN"}
+  ]}]
+}
