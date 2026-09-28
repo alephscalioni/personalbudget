@@ -196,7 +196,7 @@ function categoryChart(summary) {
   const rings = groups
     .map(([name, value], i) => {
       const dash = (value / total) * 100;
-      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="hsl(${215 + i * 47} 35% 55%)" stroke-width="11" pathLength="100" stroke-dasharray="${Math.max(0, dash - 0.8)} ${100 - Math.max(0, dash - 0.8)}" stroke-dashoffset="${-offset}"><title>${esc(name)} · ${Math.round(value / total * 100)}%</title></circle>`;
+      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="hsl(${215 + i * 47} 35% 55%)" stroke-width="11" pathLength="100" stroke-dasharray="${dash} ${100 - dash}" data-action="category-filter" data-group="${esc(name)}" style="cursor:pointer" stroke-dashoffset="${-offset}"><title>${esc(name)} · ${Math.round(value / total * 100)}%</title></circle>`;
       offset += dash;
       return circle;
     })
@@ -230,7 +230,7 @@ function cycleDetails() {
   const bank = transactionsForBasis(state.transactions, "cash", state.data.budget);
   const due = bank.filter(t => !t.manual && t.date.slice(0, 7) === state.month && Number(t.date.slice(8, 10)) <= 15 && t.kind === "expense");
   const bills = sum(due.filter(t => t.natureza === "fatura").map(t => t.amount));
-  return `<section class="panel cycle-note"><h2>Primeira quinzena · ${monthName(state.month)}</h2><p>Saídas bancárias registradas até o dia 15: ${amount(sum(due.map(t => t.amount)))}. Pagamentos de cartões nesse período: ${amount(bills)}.</p><p>Seu calendário: cartões na primeira semana, condomínio no dia 10, depois luz e MBA até dezembro de 2026. Os valores acima são realizados; contas futuras ainda não pagas não estão incluídas.</p></section>`;
+  return `<section class="panel cycle-note"><h2>Primeira quinzena · ${monthName(state.month)}</h2><p>Total bancário sem filtros, registrado até o dia 15: ${amount(sum(due.map(t => t.amount)))}. Pagamentos de cartões nesse período: ${amount(bills)}.</p><p>Seu calendário: cartões na primeira semana, condomínio no dia 10 e depois luz${state.month <= "2026-12" ? "; MBA previsto até dezembro de 2026" : ""}. Os valores acima são realizados; contas futuras ainda não pagas não estão incluídas.</p></section>`;
 }
 function overview() {
   const d = wealth(),
@@ -251,7 +251,7 @@ function overview() {
  <section class="panel"><div class="panel-head"><div><h2>Para onde vai seu dinheiro</h2><p>Distribuição dos gastos do mês</p></div><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
  <div class="insight">${icon("leaf")}<div><b>${b.remaining >= 0 ? "Seu planejamento tem espaço para respirar." : "Hora de dar atenção ao orçamento."}</b><p>${b.remaining >= 0 ? `Restam ${amount(b.remaining)} no limite mensal.` : `O consumo supera o limite em ${amount(-b.remaining)}.`} ${over ? `${over} ${over === 1 ? "categoria passou" : "categorias passaram"} do limite.` : "Acompanhe os limites por categoria."} Inclui VA/VR estimado.</p></div><a class="text-button" href="#budget">Revisar orçamento →</a></div>
  <section class="panel transactions-panel"><div class="panel-head"><div><h2>Últimas transações</h2><p>Os movimentos mais recentes do mês</p></div><a class="text-button" href="#transactions">Ver todas →</a></div>${rowTable(recent)}</section>
- <section class="panel overview-budget"><div class="panel-head"><div><h2>De olho no orçamento</h2><p>Seus limites, sempre por perto</p></div><a class="text-button" href="#budget">Detalhes ↗</a></div><div class="budget-items">${b.lines
+ <section class="panel overview-budget"><div class="panel-head"><div><h2>De olho no orçamento</h2><p>Ciclo completo do salário · sem filtros</p></div><a class="text-button" href="#budget">Detalhes ↗</a></div><div class="budget-items">${b.lines
    .filter((l) => l.grupos.length)
    .sort(
      (a, b) =>
@@ -702,7 +702,7 @@ function transactionForm() {
       competence: f.get("competence") || null,
       is_salary: f.get("is_salary") === "true",
     });
-    state.month = competenceMonth(
+    state.month = (state.basis === "cycle" ? cycleMonth : state.basis === "competence" ? competenceMonth : t => t.date.slice(0,7))(
       {
         date: f.get("date"),
         kind: f.get("kind"),
