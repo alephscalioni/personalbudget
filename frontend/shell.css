@@ -1661,3 +1661,37 @@ body.private .donut svg {
   display: grid;
   place-items: center;
 }
+
+.auth-mode .sidebar,
+.auth-mode .topbar,
+.auth-mode footer {
+  display: none;
+}
+.auth-mode .workspace {
+  margin: 0;
+}
+.auth-mode main {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+}
+.auth-mode .login-shell {
+  min-height: 0;
+  width: 100%;
+}
+.login-card .login-brand {
+  margin-bottom: 28px;
+}
+.login-card .login-brand .brand-icon {
+  margin-bottom: 0;
+}
+@media (max-width: 480px) {
+  .auth-mode main {
+    padding: 16px;
+  }
+  .login-card {
+    padding: 28px 24px;
+  }
+}

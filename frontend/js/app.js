@@ -331,6 +331,7 @@ function render() {
     )
     .join("");
   if (!state.data) return;
+  document.body.classList.remove("auth-mode");
   content.innerHTML = renderers[state.page]();
   const age = Math.floor(
     (Date.now() - new Date(state.data.finance.gerado_em).getTime()) / 86400000,
@@ -412,12 +413,14 @@ async function load() {
   render();
 }
 function authScreen(title, description, fields, button, extra = "") {
+  document.body.classList.add("auth-mode");
+  document.title = "Entrar · Personal Budget";
   state.data = null;
   state.transactions = [];
   document.querySelector("#navigation").innerHTML = "";
   document.querySelector("#source").textContent = "";
   document.querySelector("#refresh").hidden = true;
-  content.innerHTML = `<div class="login-shell"><form class="login-card" id="access-form"><span class="brand-icon">▥</span><h1>${title}</h1><p>${description}</p>${fields}<button class="button primary" type="submit">${button}</button><p id="login-error" class="form-error" role="alert"></p>${extra}</form></div>`;
+  content.innerHTML = `<div class="login-shell"><form class="login-card" id="access-form"><div class="brand login-brand"><span class="brand-icon">▥</span><span>personal<span class="brand-second">budget.</span></span></div><h1>${title}</h1><p>${description}</p>${fields}<button class="button primary" type="submit">${button}</button><p id="login-error" class="form-error" role="alert"></p>${extra}</form></div>`;
 }
 function accessForm(handler) {
   document.querySelector("#access-form").onsubmit = async (event) => {
@@ -440,7 +443,7 @@ function renderLogin(configured = true) {
     configured
       ? "Entre para acompanhar as finanças de vocês."
       : "O acesso privado está sendo configurado.",
-    '<label>Usuário<input name="username" autocomplete="username" required autofocus placeholder="alephscalioni ou biancascalioni"></label><label style="margin-top:15px">Senha<input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>',
+    '<label>Usuário<input name="username" autocomplete="username" required autofocus></label><label style="margin-top:15px">Senha<input type="password" name="password" autocomplete="current-password" required maxlength="256"></label>',
     "Entrar no meu espaço →",
     '<button class="text-button" type="button" data-action="forgot-password" style="margin-top:18px">Esqueci minha senha</button>',
   );
@@ -481,7 +484,7 @@ function renderForgot() {
   authScreen(
     "Vamos recuperar seu acesso.",
     "Informe seu usuário. O link será enviado ao e-mail cadastrado.",
-    '<label>Usuário<input name="username" autocomplete="username" required autofocus placeholder="alephscalioni ou biancascalioni"></label>',
+    '<label>Usuário<input name="username" autocomplete="username" required autofocus></label>',
     "Enviar link de recuperação",
     '<button class="text-button" type="button" data-action="back-to-login">Voltar ao login</button>',
   );
