@@ -18,7 +18,7 @@ class ApiTests(unittest.TestCase):
                      'contas': [{'tipo': 'BANK', 'nome': 'Conta teste', 'saldo': 100, 'lancamentos': [{'data':'2026-08-31','desc':'Salário teste','valor':1000,'tipo':'CREDIT','categoria':'Salary','natureza':'entrada','metodo':'Salário'}]}],
                      'investimentos': []}]}
         (root / 'consolidado-2026-09-27.json').write_text(json.dumps(fixture))
-        self.patches = [patch.object(store, 'DATABASE', root / 'test.sqlite3'),
+        self.patches = [patch.object(store, 'DATABASE_URL', ''), patch.object(store, 'DATABASE', root / 'test.sqlite3'),
                         patch.object(service, 'REPORTS', root),
                         patch.object(service, 'aplica_contrapartes', lambda p: None),
                         patch.object(service, 'aplica_mascara', lambda p: None),
@@ -280,6 +280,27 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result['lancamentos'][0]['salary_person'],'aleph')
         self.assertTrue(result['lancamentos'][0]['externa'])
         self.assertEqual(result['lancamentos'][0]['valor'],1000)
+
+    def test_category_review_persists_and_reset_restores_source(self):
+        row = self.client.get('/api/data').json()['finance']['lancamentos'][0]
+        result = self.client.put('/api/transactions/'+row['id']+'/classification',json={'group':'Salário','reviewed':True,'salary_person':'aleph','is_salary':True,'kind':'income'})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(self.client.get('/api/data').json()['overrides'][0]['group'],'Salário')
+        self.assertTrue(self.client.get('/api/data').json()['overrides'][0]['reviewed'])
+        self.assertEqual(self.client.get('/api/data').json()['finance']['lancamentos'][0],row)
+        self.assertEqual(self.client.put('/api/transactions/'+row['id']+'/classification',json={'group':''}).status_code,422)
+        self.client.delete('/api/transactions/'+row['id']+'/classification')
+        self.assertEqual(self.client.get('/api/data').json()['overrides'],[])
+
+    def test_cashflow_budget_is_month_specific_and_audited(self):
+        plan={'month':'2026-09','opening_balance':100,'lines':[{'id':'cards','name':'Cartões','budget':3000,'funding':'aleph','due_day':7}]}
+        response=self.client.put('/api/cashflow',json=plan)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json()['id'],'2026-09')
+        self.client.put('/api/cashflow',json={**plan,'month':'2026-10','opening_balance':0})
+        self.assertEqual(len(self.client.get('/api/data').json()['cashflow_plans']),2)
+        self.assertEqual(self.client.get('/api/audit').json()['entries'][0]['kind'],'cashflow')
+        self.assertEqual(self.client.put('/api/cashflow',json={**plan,'lines':plan['lines']*2}).status_code,422)
 
 
 if __name__ == '__main__':

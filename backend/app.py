@@ -4,10 +4,13 @@ import os
 import posixpath
 import shutil
 import sqlite3
+import psycopg
 import subprocess
 import sys
 import threading
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from . import bank_sync
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
@@ -15,18 +18,28 @@ from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResp
 from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT, FRONTEND, GENERATOR
-from .models import Budget, Goal, Transaction, TransactionOverride, Position
+from .models import Budget, Goal, Transaction, TransactionOverride, Position, CashflowPlan
 from . import auth, service, store, kaleu
 
-app = FastAPI(title='Personal Budget', version='2.0.0')
+@asynccontextmanager
+async def lifespan(app):
+    store.initialize()
+    bank_sync.seed()
+    worker, stop = bank_sync.start()
+    yield
+    stop.set()
+
+
+app = FastAPI(title='Personal Budget', version='3.0.0', lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(kaleu.router)
 refresh_lock = threading.Lock()
 
 
+@app.exception_handler(psycopg.Error)
 @app.exception_handler(sqlite3.Error)
 async def database_error(request: Request, exc: sqlite3.Error):
-    return JSONResponse({'detail': 'Não foi possível acessar o planejamento local. Confira a disponibilidade e a permissão de gravação da pasta de dados.'}, status_code=503)
+    return JSONResponse({'detail': 'O banco de dados está temporariamente indisponível. Tente novamente em instantes.'}, status_code=503)
 
 
 @app.middleware('http')
@@ -95,18 +108,14 @@ def data():
         raise HTTPException(422, detail='O consolidado possui dados inválidos. Confira o arquivo de origem.')
 
 
-@app.post('/api/refresh')
+@app.post('/api/refresh', status_code=202)
 def refresh():
-    if not refresh_lock.acquire(blocking=False):
-        raise HTTPException(409, 'Uma atualização já está em andamento.')
-    try:
-        info = sync_dashboard()
-        service.snapshot.cache_clear()
-        return {'ok': True, **info}
-    except (OSError, RuntimeError, subprocess.SubprocessError):
-        raise HTTPException(500, 'Não foi possível reconstruir o relatório local. Os dados salvos foram preservados.')
-    finally:
-        refresh_lock.release()
+    if not bank_sync.enabled():
+        raise HTTPException(503, 'A sincronização bancária ainda não está configurada.')
+    current = store.get('setting', 'bank-sync') or {}
+    current['requested_at'] = __import__('time').time()
+    store.save('setting', current, 'bank-sync')
+    return {'ok': True, 'status': 'queued'}
 
 
 @app.put('/api/budget')
@@ -187,7 +196,7 @@ def audit_history():
 def backup():
     return JSONResponse({'version': 1, 'exported_at': datetime.now(timezone.utc).isoformat(),
         'budget': store.all_of('budget') or [service.default_budget()],
-        'positions': store.all_of('position'), 'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override')},
+        'cashflow_plans': store.all_of('cashflow'), 'positions': store.all_of('position'), 'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override')},
         headers={'Content-Disposition': 'attachment; filename="personal-budget-backup.json"'})
 
 
@@ -202,3 +211,8 @@ def home():
 
 
 app.mount('/app', StaticFiles(directory=FRONTEND, html=True), name='frontend')
+
+
+@app.put('/api/cashflow')
+def save_cashflow(body: CashflowPlan):
+    return store.save('cashflow', body.model_dump(mode='json'), body.month)

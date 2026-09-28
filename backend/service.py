@@ -61,7 +61,16 @@ def matches_salary_rule(transaction, rule):
 
 @lru_cache(maxsize=2)
 def snapshot(path, fingerprints):
-    payload = build(json.loads(path.read_text(encoding='utf-8')))
+    return prepare(json.loads(path.read_text(encoding='utf-8')))
+
+
+@lru_cache(maxsize=2)
+def database_snapshot(body, fingerprints):
+    return prepare(json.loads(body))
+
+
+def prepare(raw):
+    payload = build(raw)
     seen = Counter()
     for t in payload['lancamentos']:
         identity = [t.get(k) for k in ('instituicao', 'conta', 'conta_tipo', 'data', 'desc', 'valor', 'tipo', 'fatura')]
@@ -88,15 +97,31 @@ def snapshot(path, fingerprints):
 
 
 def data():
+    record = store.get('bank-snapshot', 'current')
     path = latest()
-    if path is None:
+    if path is None and not record:
         raise FileNotFoundError('Nenhum consolidado disponível. Adicione um arquivo em data/reports.')
-    deps = [path, *(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json', 'salary-rules.json'])]
-    payload = snapshot(path, tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in deps))
+    deps = [*(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json', 'salary-rules.json'])]
+    fingerprints = tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in deps)
+    payload = database_snapshot(json.dumps(record['raw']), fingerprints) if record else snapshot(path, (path.stat().st_mtime_ns, *fingerprints))
     payload, declared = positions.apply(payload)
+    overrides = store.all_of('override')
+    assigned = {o['id'] for o in overrides if o.get('is_salary') and o.get('salary_person')}
+    confirmed = {t['desc']:o['salary_person'] for t in payload['lancamentos'] for o in overrides if o['id']==t['id'] and o.get('is_salary') and o.get('salary_person')}
+    rules_path = FINANCE_CONFIG / 'salary-rules.json'
+    payer_rules = json.loads(rules_path.read_text()).get('rules', []) if rules_path.exists() else []
+    for t in payload['lancamentos']:
+        if t.get('valor',0)<=0 or t.get('conta_tipo')=='CREDIT' or t.get('salary_person') or t['id'] in assigned:
+            continue
+        if t.get('desc') in confirmed:
+            t['salary_candidate'] = confirmed[t['desc']]
+        for rule in payer_rules:
+            root=rule.get('payer_root','')
+            if len(root)==8 and re.sub(r'\D','',t.get('desc','')).startswith(root[:5]):
+                t['salary_candidate']=rule['person']
     budgets = store.all_of('budget')
-    return {'source': path.name, 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
-            'salary_plan': salary_plan(), 'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
+    return {'source': record['source'] if record else path.name, 'sync': store.get('setting', 'bank-sync') or {}, 'storage': 'postgresql' if store.DATABASE_URL else 'sqlite', 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
+            'salary_plan': salary_plan(), 'cashflow_plans': store.all_of('cashflow'), 'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
 
 
 def classifier_module():

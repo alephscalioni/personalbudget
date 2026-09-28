@@ -31,3 +31,15 @@ Para editar ou excluir, consulte antes o registro e identifique-o sem ambiguidad
 - Sempre informe período, critério de cálculo e limitações da última coleta. Não diga que houve nova coleta bancária se só releu o consolidado.
 
 A API também retorna `salary_plan`, com a renda prevista atual por pessoa; não é histórico de recebimentos. `salary_person` identifica salários confirmados. PIX com nome da Bianca não prova salário: confirme a finalidade e nunca some novamente um recebimento já importado.
+
+
+## Fluxo de caixa por ciclo — regra da família
+
+O ciclo das contas de um mês começa no recebimento regular de Aleph no fim do mês anterior, que pode ser antecipado. Soma-se o salário de Bianca no começo do mês. Acompanhe os pagamentos efetivos até o próximo salário de Aleph; dia 15 é o marco principal, não um corte que exclui despesas posteriores. Datas ausentes geram limites estimados, nunca salários fictícios.
+
+- GET `/api/data` inclui `cashflow_plans`, `sync`, `storage` e candidatos salariais (`salary_candidate`, hipótese que exige revisão).
+- PUT `/api/cashflow`: `month` YYYY-MM, `opening_balance` e `lines` com id, name, budget (número ou null), due_day (1–31 ou null), funding (pool/aleph/bianca), end_month (YYYY-MM ou null). Budget mensal por linha; não confundir com o orçamento de consumo por categoria.
+- PUT `/api/transactions/{id}/classification` também aceita `group`, `reviewed` e `cashflow_line`. Preserve os demais ajustes. `cycle` explícito prevalece sobre a janela inferida.
+- No fluxo operacional, some saídas bancárias e pagamentos de fatura; não some compras de cartão novamente. Transferências próprias, aplicações e resgates não são renda ou custo operacional. A análise de competência continua separada.
+- A destinação `funding` é um planejamento: não afirma rastreamento bancário do dinheiro. Sem definição explícita, use fundo conjunto. Mostre previsto, recebido, pago, ainda orçado e desvios separadamente. Não trate budget restante como dívida confirmada.
+- Cartões na primeira semana, condomínio no dia 10, depois luz e MBA (até dezembro de 2026). Há pagamentos após dia 15; preserve a data real e sinalize a diferença.

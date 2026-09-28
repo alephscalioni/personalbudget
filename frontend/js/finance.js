@@ -111,3 +111,71 @@ export function salaryBreakdown(transactions, month, budget = {}) {
   }
   return {received, unassigned, candidates};
 }
+
+// Cash planning follows the salary funding window, not purchase competence.
+export function salaryWindow(transactions, month, budget = {}) {
+  const previous = monthSequence(month, 2)[0];
+  const anchors = transactions.filter(t => t.kind === 'income' && t.salary_person === 'aleph' && cycleMonth(t,budget) === month && t.date.slice(0,7) === previous && Number(t.date.slice(8,10)) >= (budget.salary_cutoff_day ?? 25));
+  if (anchors.length) return {start: anchors.map(t => t.date).sort()[0], estimated:false};
+  const [year, m] = month.split('-').map(Number);
+  const date = new Date(year, m-1, 0);
+  while ([0,6].includes(date.getDay())) date.setDate(date.getDate()-1);
+  return {start:`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`,estimated:true};
+}
+export function cashflowCycle(t, transactions, budget = {}) {
+  if (t.cycle) return t.cycle;
+  if (t.kind === 'income' && (t.is_salary || t.salary_person || t.metodo === 'Salário')) return cycleMonth(t,budget);
+  const month=t.date.slice(0,7), [year,m]=month.split('-').map(Number);
+  const next=`${m===12?year+1:year}-${String(m===12?1:m+1).padStart(2,'0')}`;
+  return t.date >= salaryWindow(transactions,next,budget).start ? next : month;
+}
+export function defaultCashflowLines(transactions, budget) {
+  const fixed=[
+    {id:'cards',name:'Faturas dos cartões',due_day:7},
+    {id:'condo',name:'Condomínio',due_day:10},
+    {id:'electricity',name:'Luz',due_day:15},
+    {id:'mba',name:'MBA',end_month:'2026-12'},
+    {id:'housing',name:'Financiamento imobiliário'},
+  ];
+  const groups=[...new Set([...budget.lines.flatMap(l=>l.grupos),...transactions.filter(t=>t.kind==='expense'&&t.conta_tipo!=='CREDIT').map(t=>t.group)])].filter(Boolean).sort();
+  return [...fixed,...groups.map(group=>({id:'group_'+Array.from(group).map(c=>c.codePointAt(0).toString(16)).join('_'),name:group,group}))].map(l=>({...l,budget:null,funding:'pool'}));
+}
+export function cashflowLineId(t, lines) {
+  if(t.cashflow_line && lines.some(l=>l.id===t.cashflow_line))return t.cashflow_line;
+  if(t.natureza==='fatura')return 'cards';
+  const text=(t.description||t.desc||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  if(/harmonia morumbi|condominio/.test(text))return 'condo';
+  if(/enel|eletric|energia/.test(text)||t.categoria==='Electricity')return 'electricity';
+  if(/fundacao pesquisa e desen|\bmba\b/.test(text))return 'mba';
+  if(/credito imobiliario|financiamento imobiliario/.test(text))return 'housing';
+  return lines.find(l=>l.group===t.group || l.name===t.group)?.id || 'unallocated';
+}
+export function cashflowSummary(transactions, month, budget, savedPlan, salaryPlan=[]) {
+  const defaults=defaultCashflowLines(transactions,budget);
+  const plan=savedPlan || {opening_balance:0,lines:defaults};
+  const definitions=[...plan.lines.map(l=>({...defaults.find(d=>d.id===l.id),...l})),...defaults.filter(d=>!plan.lines.some(l=>l.id===d.id))];
+  const all=transactions.filter(t=>t.conta_tipo!=='CREDIT'&&cashflowCycle(t,transactions,budget)===month);
+  const incomes=all.filter(t=>t.kind==='income' && (t.manual || t.valor>0));
+  const payments=all.filter(t=> (t.manual?t.kind==='expense':t.valor<0&&(t.kind==='expense'||t.natureza==='fatura')));
+  const rows=[...definitions,{id:'unallocated',name:'Sem linha definida',budget:null,funding:'pool'}].map(l=>{
+    const tx=payments.filter(t=>cashflowLineId(t,definitions)===l.id);
+    const paid=sum(tx.map(t=>t.amount));
+    const planned=l.end_month && month>l.end_month ? 0 : l.budget;
+    return {...l,budget:planned,paid,transactions:tx,remaining:planned==null?null:round(Math.max(0,planned-paid)),variance:planned==null?null:round(planned-paid)};
+  }).filter(l=>l.id!=='unallocated'||l.paid);
+  const salary={aleph:0,bianca:0};
+  for(const person of Object.keys(salary))salary[person]=sum(incomes.filter(t=>t.salary_person===person).map(t=>t.amount));
+  const income=sum(incomes.map(t=>t.amount)), paid=sum(rows.map(l=>l.paid)), remaining=sum(rows.map(l=>l.remaining||0));
+  const [year,m]=month.split('-').map(Number),next=`${m===12?year+1:year}-${String(m===12?1:m+1).padStart(2,'0')}`;
+  return {rows,salary,incomes,income,paid,remaining,opening:plan.opening_balance||0,balance:round((plan.opening_balance||0)+income-paid),projected:round((plan.opening_balance||0)+income-paid-remaining),planned:sum(rows.map(l=>l.budget||0)),unplanned:rows.filter(l=>l.budget==null).length,start:salaryWindow(transactions,month,budget),end:salaryWindow(transactions,next,budget),salaryPlan};
+}
+
+export function cashflowTransactions(transactions, budget={}) {
+  const lines=defaultCashflowLines(transactions,budget);
+  return transactions.filter(t=>t.conta_tipo!=='CREDIT').map(t=>{
+    const kind=t.natureza==='fatura'&&t.valor<0?'expense':t.kind;
+    const line=cashflowLineId(t,lines);
+    const group=kind==='expense' ? lines.find(l=>l.id===line)?.name || t.group : t.group;
+    return {...t,kind,group,competence:cashflowCycle(t,transactions,budget)};
+  });
+}

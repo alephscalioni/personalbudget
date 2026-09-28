@@ -1,4 +1,9 @@
 import {
+  cashflowTransactions,
+  cashflowCycle,
+  cashflowSummary,
+  defaultCashflowLines,
+  cashflowLineId,
   sum,
   expense,
   monthSummary,
@@ -26,6 +31,7 @@ import {
 
 const pages = {
   overview: "Visão geral",
+  cashflow: "Fluxo por ciclo",
   transactions: "Transações",
   budget: "Orçamento",
   accounts: "Contas e cartões",
@@ -35,6 +41,7 @@ const pages = {
 };
 const mobileNames = {
   overview: "Início",
+  cashflow: "Fluxo",
   transactions: "Transações",
   budget: "Orçamento",
   accounts: "Contas",
@@ -56,6 +63,7 @@ const state = {
   source: "all",
   includeDeclared: true,
   filtersOpen: false,
+  reviewPrompted: false,
   kaleuMessages: [],
 };
 const content = document.querySelector("#content");
@@ -129,7 +137,7 @@ function kpi(title, value, note, symbol, featured = false, cls = "") {
 }
 function viewTransactions() {
   const basis = state.page === "budget" ? "cycle" : state.basis;
-  return transactionsForBasis(state.transactions, basis, state.data.budget);
+  return basis === "cycle" && state.page !== "budget" ? cashflowTransactions(state.transactions, state.data.budget) : transactionsForBasis(state.transactions, basis, state.data.budget);
 }
 function matchesFilters(t) {
   const query = state.search.toLocaleLowerCase("pt-BR");
@@ -146,7 +154,7 @@ function getSummary() {
 function basisNote() {
   return state.basis === "cash" ? "Caixa: entradas e saídas das contas na data bancária, incluindo faturas, aplicações e transferências. Compras no cartão não saem do caixa novamente."
     : state.basis === "competence" ? "Competência: mês informado do gasto ou da renda. Sem ajuste, usa a data do lançamento; salário recebido no dia 01 é atribuído ao mês trabalhado anterior."
-    : "Ciclo do salário: recebimentos do fim do mês e do dia 01 financiam o mesmo mês de contas. Cartões usam o mês da fatura, quando informado. Compras e pagamentos de fatura não são somados duas vezes.";
+    : "Ciclo: começa no salário de Aleph, soma a entrada de Bianca e acompanha os pagamentos até o próximo salário. Aqui entram faturas pagas; compras no cartão ficam na visão de competência. Sem salário identificado, a fronteira do ciclo é estimada.";
 }
 
 function getBudget() {
@@ -241,6 +249,56 @@ function salariesPanel() {
   const current = salaryBreakdown(state.transactions, state.month, state.data.budget);
   return `<section class="panel salary-panel"><div class="panel-head"><div><h2>Salários mês a mês</h2><p>Ciclo do salário · valores por pessoa, sem repetir receitas do extrato</p></div></div><div class="salary-plan">${plan.map(p => `<div><b>${esc(p.name)} · ${esc(p.regime)}</b><p>Líquido previsto: ${amount(p.net)}</p>${p.gross == null ? "" : `<small>Bruto de referência: ${amount(p.gross)}</small>`}</div>`).join("")}</div><p class="info-note">Estes são os valores atuais do planejamento, não recebimentos históricos confirmados. Os totais abaixo usam salários atribuídos a cada pessoa. “Não identificado” não significa que não houve pagamento.</p><div class="table-wrap"><table><thead><tr><th>Ciclo</th><th>Aleph · identificado</th><th>Bianca · identificado</th><th>Salários sem titular</th></tr></thead><tbody>${rows.map(month => {const s = salaryBreakdown(state.transactions, month, state.data.budget);return `<tr><td>${esc(monthName(month))}</td><td>${s.received.aleph ? amount(s.received.aleph) : '<span class="muted">Não identificado</span>'}</td><td>${s.received.bianca ? amount(s.received.bianca) : '<span class="muted">Não identificado</span>'}</td><td>${s.unassigned ? amount(s.unassigned) : '—'}</td></tr>`;}).join("")}</tbody></table></div>${current.candidates.length ? `<details><summary>Repasses da Bianca no mês: ${current.candidates.length} para conferir</summary><p class="info-note">PIX da Bianca pode ser salário, transferência ou reembolso. Confirme a finalidade antes de marcar como salário.</p>${current.candidates.map(t => `<div class="salary-candidate"><span>${dateName(t.date)} · ${esc(t.description)} · ${amount(t.amount)}</span><button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Identificar</button></div>`).join("")}</details>` : ""}<p class="info-note">Para atribuir um recebimento bancário, abra Transações → Ajustar → Titular do salário. Se o recebimento não está no extrato, registre um lançamento manual como salário e informe o titular.</p></section>`;
 }
+function currentCashflow(month = state.month) {
+  return cashflowSummary(state.transactions,month,state.data.budget,(state.data.cashflow_plans || []).find(p=>p.month===month),state.data.salary_plan);
+}
+function cashflow() {
+  const f=currentCashflow();
+  const funding={pool:"Fundo conjunto",aleph:"Salário Aleph",bianca:"Salário Bianca"};
+  const sources=(state.data.salary_plan||[]).map(p=>{
+    const assigned=sum(f.rows.filter(l=>l.funding===p.person).map(l=>l.paid));
+    return `<article class="panel"><h2>${esc(p.name)}</h2><div class="kpi-value">${amount(f.salary[p.person])}</div><p class="info-note">Recebido · previsto ${amount(p.net)}</p><small>Pagamentos atribuídos: ${amount(assigned)}</small></article>`;
+  }).join("");
+  return pageHead("Fluxo de caixa por ciclo", "Salários → contas → saldo do ciclo", `<button class="button primary" data-action="edit-cashflow">Editar budget e origem</button>`) +
+   `<div class="cycle-window"><b>Contas de ${esc(monthName(state.month))}</b><span>Início ${dateName(f.start.start)}${f.start.estimated ? " · estimado" : " · salário Aleph"} → próximo salário ${dateName(f.end.start)}${f.end.estimated ? " · estimado" : ""}</span><small>Contas principais até dia 15. Antecipações e pagamentos posteriores também entram no ciclo.</small></div>
+   <div class="kpis">${kpi("Entradas recebidas",f.income,"Salários e outras receitas","down")}${kpi("Contas pagas",f.paid,"Saídas efetivas · fatura contada uma vez","arrow")}${kpi("Saldo do ciclo",f.balance,`Saldo inicial informado: ${money(f.opening)}`,"leaf",true)}${kpi("Ainda orçado",f.remaining,f.unplanned ? `${f.unplanned} linhas sem budget definido` : "Budget menos pagamentos realizados","budget")}</div>
+   <div class="salary-cards">${sources}</div>
+   <section class="panel"><div class="panel-head"><div><h2>Aplicação dos salários</h2><p>A origem é a destinação planejada; valores sem divisão ficam no fundo conjunto.</p></div><button class="text-button" data-action="kaleu-analysis">Analisar com Kaleu ↗</button></div><div class="table-wrap"><table><thead><tr><th>Linha de custo</th><th>Até dia</th><th>Origem planejada</th><th class="right">Budget</th><th class="right">Pago</th><th class="right">Ainda orçado</th><th class="right">Desvio</th></tr></thead><tbody>${f.rows.map(l=>`<tr><td><details><summary>${esc(l.name)} <small>(${l.transactions.length})</small></summary>${l.transactions.map(t=>`<div class="flow-transaction">${dateName(t.date)} · ${esc(t.description)} · ${amount(t.amount)} <button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">${t.manual ? "" : "Ajustar"}</button></div>`).join("") || '<small>Nenhum pagamento identificado.</small>'}</details></td><td>${l.due_day||'—'}</td><td>${funding[l.funding]}</td><td class="right">${l.budget==null?'<span class="muted">Definir</span>':amount(l.budget)}</td><td class="right">${amount(l.paid)}</td><td class="right">${l.remaining==null?'—':amount(l.remaining)}</td><td class="right ${l.variance<0?'negative':''}">${l.variance==null?'—':amount(l.variance)}</td></tr>`).join("")}</tbody><tfoot><tr><th colspan="3">Total</th><th class="right">${amount(f.planned)}</th><th class="right">${amount(f.paid)}</th><th class="right">${amount(f.remaining)}</th><th class="right">${amount(f.planned-f.paid)}</th></tr></tfoot></table></div></section>
+   <div class="flow-footer"><span>Saldo após cumprir o budget: <b>${amount(f.projected)}</b>${f.unplanned ? " · previsão incompleta" : ""}</span><span>Pagamentos no fundo conjunto: ${amount(sum(f.rows.filter(l=>l.funding==='pool').map(l=>l.paid)))}</span></div>
+   <p class="info-note">Este é o saldo do ciclo, não o saldo bancário. Compras no cartão aparecem na análise de consumo; aqui entra o pagamento da fatura. Transferências próprias e aplicações ficam fora do fluxo operacional. Limites estimados consideram fins de semana, sem calendário de feriados; ajuste o ciclo de um lançamento quando necessário.</p>`;
+}
+function cashflowForm() {
+  const f=currentCashflow(), rows=f.rows.filter(l=>l.id!=='unallocated');
+  const history=monthSequence(state.month,4).slice(0,3).map(m=>currentCashflow(m));
+  openModal("Budget do ciclo", "Valores e origens valem somente para este ciclo. A média histórica é uma sugestão editável.",
+   `<form><label>Saldo inicial destinado ao ciclo<input name="opening_balance" type="number" step="0.01" value="${f.opening}" required></label><div class="review-list">${rows.map((l,i)=>{
+     const amounts=history.map(h=>h.rows.find(r=>r.id===l.id)?.paid||0).filter(v=>v>0);
+     const suggested=amounts.length ? Math.round(sum(amounts)/amounts.length*100)/100 : '';
+     return `<fieldset class="flow-edit"><legend>${esc(l.name)}</legend><div class="form-grid"><label>Budget (R$)<input name="amount-${i}" type="number" min="0" step="0.01" value="${l.budget??''}" placeholder="${suggested ? 'Histórico: '+suggested : 'Definir valor'}"></label><label>Até dia<input name="due-${i}" type="number" min="1" max="31" value="${l.due_day||''}"></label><label>Qual salário paga?<select name="fund-${i}">${options([["pool","Fundo conjunto"],["aleph","Aleph"],["bianca","Bianca"]],l.funding)}</select></label><label>Último ciclo (opcional)<input name="end-${i}" type="month" value="${l.end_month||''}"></label></div></fieldset>`;
+   }).join("")}</div>${formFooter("Salvar budget deste ciclo")}</form>`);
+  bindForm(form=>api("cashflow","PUT",{month:state.month,opening_balance:Number(form.get("opening_balance")),lines:rows.map((l,i)=>({id:l.id,name:l.name,budget:form.get(`amount-${i}`)===''?null:Number(form.get(`amount-${i}`)),due_day:form.get(`due-${i}`)?Number(form.get(`due-${i}`)):null,funding:form.get(`fund-${i}`),end_month:form.get(`end-${i}`)||null}))}));
+}
+function pendingReviews() {
+  return state.transactions.filter(t => !t.manual && !t.reviewed &&
+    ((t.salary_candidate && !t.salary_person) || (["expense", "refund"].includes(t.kind) && ["Outros", "Transferências", "Sem categoria"].includes(t.group)) ||
+     (t.kind === "income" && (t.is_salary || t.metodo === "Salário") && !t.salary_person)));
+}
+function syncLabel() {
+  const sync = state.data.sync || {};
+  if (sync.status === "running") return "Sincronizando bancos…";
+  if (sync.status === "error") return "Coleta pendente · últimos dados preservados";
+  return sync.last_success ? `Atualizado ${new Date(sync.last_success * 1000).toLocaleString("pt-BR", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · a cada hora` : "Aguardando sincronização";
+}
+function guideStrip() {
+  const count = pendingReviews().length;
+  return `<div class="guide-strip"><a class="button small" href="#cashflow">Fluxo por ciclo →</a><span>${esc(syncLabel())}</span><div><button class="text-button" data-action="review-pending">${count ? `${count} lançamentos para revisar` : "Categorias revisadas"}</button><button class="button small" data-action="kaleu-analysis">Analisar com Kaleu ↗</button></div></div>`;
+}
+function reviewModal() {
+  const pending = pendingReviews();
+  if (modal.open) modal.close();
+  openModal("Revisar lançamentos", "Confirme a categoria e o tratamento de cada movimento.",
+    pending.length ? `<div class="review-list">${pending.slice(0,20).map(t => `<div class="salary-candidate"><span><b>${esc(t.description)}</b><br>${dateName(t.date)} · ${esc(t.instituicao)} · ${amount(t.amount)}</span><button class="button small" data-action="classify-transaction" data-id="${esc(t.id)}">Categorizar</button></div>`).join("")}</div><p class="info-note">${pending.length} pendentes. Você pode fechar e retomar pela visão geral.</p>` : empty("Tudo revisado", "Você pode ajustar qualquer categoria em Transações."));
+}
 function salaryCards() {
   const rows = getSummary().rows;
   return `<div class="salary-cards">${(state.data.salary_plan || []).map(p => {
@@ -256,7 +314,7 @@ function overview() {
   const basis = {cycle: "Ciclo do salário", cash: "Caixa", competence: "Competência"}[state.basis];
   return `<div class="financial-dashboard">` + pageHead("Visão geral", "", `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`) +
     `<details class="dashboard-filters" ${state.filtersOpen ? "open" : ""}><summary>Filtros${activeFilters ? ` · ${activeFilters} ativos` : ""}<span>${esc(basis)} · ${esc(monthName(state.month))}</span></summary>${filterControls()}${declaredControl()}</details>
-    <div class="kpis">${kpi("Receitas", s.income, basis, "down", false, "positive")}${kpi("Despesas", s.spending, basis, "arrow")}${kpi("Resultado", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas`, "leaf", true)}${kpi("Patrimônio líquido", d.resumo.liquido, `Posição de ${dateName(d.gerado_em)} · ${state.includeDeclared ? "com" : "sem"} declarados`, "overview")}</div>
+    ${guideStrip()}<div class="kpis">${kpi("Receitas", s.income, basis, "down", false, "positive")}${kpi("Despesas", s.spending, basis, "arrow")}${kpi("Resultado", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas`, "leaf", true)}${kpi("Patrimônio líquido", d.resumo.liquido, `Posição de ${dateName(d.gerado_em)} · ${state.includeDeclared ? "com" : "sem"} declarados`, "overview")}</div>
     ${salaryCards()}
     <div class="grid-main"><section class="panel"><div class="panel-head"><h2>Receitas e despesas</h2><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>Últimos 6 meses · ${esc(basis)}</span><a class="text-button" href="#transactions">Ver extrato ↗</a></div></section>
     <section class="panel"><div class="panel-head"><h2>Despesas por categoria</h2><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
@@ -353,7 +411,7 @@ function settings() {
       "",
       false,
     ) +
-    `<div class="settings-grid"><section class="panel"><h2>Seus dados financeiros</h2><p>O app lê o consolidado mais recente disponível neste ambiente. Atualizar dados recarrega esse arquivo e reconstrói o relatório; não realiza uma nova coleta nos bancos.</p><div class="settings-row"><span>Última coleta</span><b>${dateName(d.finance.gerado_em)}</b></div><div class="settings-row"><span>Janela do extrato</span><span>${dateName(d.finance.janela[0])} – ${dateName(d.finance.janela[1])}</span></div><div class="settings-row"><span>Instituições</span><span>${d.finance.instituicoes.length}</span></div><div class="settings-row"><span>Transações importadas</span><span>${d.finance.lancamentos.length}</span></div><p class="info-note">Fonte: ${esc(d.source)}</p><button class="button" data-action="refresh">↻ Recarregar consolidado</button></section>
+    `<div class="settings-grid"><section class="panel"><h2>Seus dados financeiros</h2><p>${esc(syncLabel())}</p><div class="settings-row"><span>Banco de dados</span><b>${state.data.storage === "postgresql" ? "PostgreSQL" : "SQLite local"}</b></div><p>As conexões bancárias são consultadas de hora em hora. A chegada de novos movimentos depende da disponibilidade de cada banco. Se a coleta falhar, os últimos dados válidos são preservados.</p><div class="settings-row"><span>Última coleta</span><b>${dateName(d.finance.gerado_em)}</b></div><div class="settings-row"><span>Janela do extrato</span><span>${dateName(d.finance.janela[0])} – ${dateName(d.finance.janela[1])}</span></div><div class="settings-row"><span>Instituições</span><span>${d.finance.instituicoes.length}</span></div><div class="settings-row"><span>Transações importadas</span><span>${d.finance.lancamentos.length}</span></div><p class="info-note">Fonte: ${esc(d.source)}</p><button class="button" data-action="refresh">↻ Sincronizar bancos</button></section>
  <section class="panel"><h2>Uma cópia do seu planejamento</h2><p>Exporte limites, metas e lançamentos manuais em JSON. Para uma cópia completa do app, preserve também a pasta data e suas configurações financeiras.</p><button class="button primary" data-action="backup">Exportar planejamento ↓</button><p class="info-note">A exportação contém informações pessoais. Guarde o arquivo em um local de sua escolha.</p><h2 style="margin-top:30px">Privacidade na tela</h2><p>Use o ícone de olho na barra superior para ocultar valores enquanto compartilha a tela.</p><button class="button" data-action="privacy">${icon("eye")} ${privateMode ? "Mostrar" : "Ocultar"} valores</button>${state.session?.required ? '<button class="button" data-action="change-password" style="margin-top:12px">Trocar senha</button> <button class="button" data-action="logout" style="margin-top:12px">Sair da conta</button>' : ""}</section>
  <section class="panel"><h2>Como os números são calculados</h2><p>Receitas e despesas seguem a competência do planejamento. A data bancária original é preservada; salários de fim de mês podem financiar o mês seguinte. Compras no cartão entram uma vez; o pagamento da fatura fica fora do resultado. Estornos reduzem despesas. Transferências próprias, aplicações e eventos patrimoniais identificados também ficam fora.</p><p>O orçamento inclui o consumo estimado de VA/VR informado no planejamento. Lançamentos manuais afetam os totais mensais, mas não atualizam o saldo recebido dos bancos.</p></section><section class="panel"><h2>Relatório para conferência</h2><p>A análise detalhada original continua disponível, com fluxo mensal, parcelas, projeções e reconciliação de caixa. Ela mantém as premissas do gerador original e não incorpora o planejamento salvo neste app.</p><a class="button" href="/app/dashboard.html" target="_blank" rel="noopener">Abrir análise detalhada ↗</a></section></div>`
   );
@@ -383,7 +441,7 @@ async function loadKaleu() {
   }
 }
 
-const renderers = { overview, transactions, budget, accounts, goals, settings, kaleu: kaleuPage };
+const renderers = { cashflow, overview, transactions, budget, accounts, goals, settings, kaleu: kaleuPage };
 function render() {
   state.page =
     location.hash.slice(1) in pages ? location.hash.slice(1) : "overview";
@@ -498,7 +556,7 @@ async function load() {
         t = {
           ...t,
           ...Object.fromEntries(
-            Object.entries(override).filter(([key, value]) => value !== null || key === "salary_person"),
+            Object.entries(override).filter(([key, value]) => value !== null || ["salary_person", "cashflow_line"].includes(key)),
           ),
         };
         t.adjusted = true;
@@ -508,6 +566,10 @@ async function load() {
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!state.month) state.month = data.finance.gerado_em.slice(0, 7);
   render();
+  if (!state.reviewPrompted && state.page === "overview" && !modal.open && pendingReviews().length) {
+    state.reviewPrompted = true;
+    reviewModal();
+  }
 }
 function authScreen(title, description, fields, button, extra = "") {
   document.body.classList.add("auth-mode");
@@ -645,10 +707,11 @@ function bindForm(handler) {
 }
 function classificationForm(id) {
   const t = state.transactions.find((t) => t.id === id);
+  if (modal.open) modal.close();
   openModal(
-    "Ajustar competência",
-    "A data e o valor bancários são preservados.",
-    `<form><p class="info-note">${esc(t.description)} · ${dateName(t.date)} · ${amount(t.amount)}</p><div class="form-grid"><label>Tratamento<select name="kind">${options(
+    "Categorizar lançamento",
+    t.salary_candidate ? `Possível salário de ${t.salary_candidate === "aleph" ? "Aleph" : "Bianca"}. Confirme a origem antes de salvar.` : "A data e o valor bancários são preservados.",
+    `<form><p class="info-note">${esc(t.description)} · ${dateName(t.date)} · ${amount(t.amount)}</p><div class="form-grid"><label class="full">Categoria<select name="group">${options([...new Set([...state.transactions.map(t => t.group), ...state.data.budget.lines.flatMap(l => l.grupos), "Salário", "Outros"])].sort().map(g => [g,g]),t.group)}</select></label><label>Tratamento<select name="kind">${options(
       [
         ["income", "Receita"],
         ["expense", "Despesa"],
@@ -656,10 +719,13 @@ function classificationForm(id) {
         ["other", "Fora do resultado"],
       ],
       t.kind,
-    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(competenceMonth(t, state.data.budget))}" required></label><label>Ciclo de pagamento<input name="cycle" type="month" value="${esc(cycleMonth(t, state.data.budget))}"></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label><label>Titular do salário<select name="salary_person">${options([["", "Não informado"], ["aleph", "Aleph"], ["bianca", "Bianca"]], t.salary_person || "")}</select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
+    )}</select></label><label class="full">Linha no fluxo de caixa<select name="cashflow_line">${options([["","Automática"],...currentCashflow().rows.map(l=>[l.id,l.name])],t.cashflow_line||"")}</select></label><label>Competência<input name="competence" type="month" value="${esc(competenceMonth(t, state.data.budget))}" required></label><label>Ciclo de pagamento<input name="cycle" type="month" value="${esc(cashflowCycle(t, state.transactions, state.data.budget))}"></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label><label>Titular do salário<select name="salary_person">${options([["", "Não informado"], ["aleph", "Aleph"], ["bianca", "Bianca"]], t.salary_person || "")}</select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
   );
   bindForm(async (f) =>
     api("transactions/" + id + "/classification", "PUT", {
+      group: f.get("group"),
+      reviewed: true,
+      cashflow_line: f.get("cashflow_line") || null,
       kind: f.get("kind"),
       competence: f.get("competence"),
       cycle: f.get("cycle") || null,
@@ -772,7 +838,7 @@ async function refresh() {
     await api("refresh", "POST");
     await load();
     toast(
-      "Consolidado local recarregado. Nenhuma coleta bancária foi realizada.",
+      "Sincronização solicitada. Os dados aparecerão assim que a coleta terminar.",
     );
   } catch (error) {
     toast(error.message);
@@ -795,6 +861,15 @@ document.addEventListener("click", async (event) => {
     return;
   }
   try {
+    if (action === "edit-cashflow") cashflowForm();
+    if (action === "review-pending") reviewModal();
+    if (action === "kaleu-analysis") {
+      button.disabled = true;
+      try {
+        await api("kaleu/messages", "POST", {message: `Analise meu orçamento no ciclo ${state.month}, os salários de Aleph e Bianca, categorias pendentes, limites excedidos e contas da primeira quinzena. Consulte os dados atuais e overrides. Salários podem chegar antes do último dia útil e financiar o próximo ciclo. Dê até cinco ações concretas, separando valores confirmados de previstos. Nesta análise, proponha correções sem alterar os registros.`});
+        location.hash = "#kaleu";
+      } finally { button.disabled = false; }
+    }
     if (action === "clear-filters") {
       Object.assign(state, {search: "", kind: "all", institution: "all", group: "all", source: "all", pagination: 1});
       render();

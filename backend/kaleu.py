@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from . import auth, store
 
 router = APIRouter()
-FINANCE_PATHS = ('/api/data', '/api/budget', '/api/goals', '/api/transactions', '/api/positions', '/api/backup', '/api/audit')
+FINANCE_PATHS = ('/api/data', '/api/budget', '/api/cashflow', '/api/goals', '/api/transactions', '/api/positions', '/api/backup', '/api/audit')
 
 
 def is_agent(request):

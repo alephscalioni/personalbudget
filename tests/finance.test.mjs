@@ -185,3 +185,27 @@ test('salary attribution separates Bianca from transfers without adding income t
   assert.equal(monthSummary(transactionsForBasis(rows,'cycle'),'2026-09').income,24410);
   assert.equal(salaryBreakdown(rows,'2026-08').received.bianca,0);
 });
+
+test('cash-flow funding window includes early salary and end-of-month bills once', async()=>{
+ const {cashflowSummary, cashflowCycle}=await import('../frontend/js/finance.js');
+ const rows=[
+  {id:'a',date:'2026-08-28',kind:'income',amount:14000,valor:14000,salary_person:'aleph',is_salary:true,conta_tipo:'BANK'},
+  {id:'b',date:'2026-09-02',kind:'income',amount:10000,valor:10000,salary_person:'bianca',is_salary:true,conta_tipo:'BANK'},
+  {id:'c',date:'2026-08-31',kind:'other',amount:3000,valor:-3000,natureza:'fatura',conta_tipo:'BANK'},
+  {id:'d',date:'2026-08-20',kind:'expense',amount:3000,valor:3000,conta_tipo:'CREDIT'},
+  {id:'e',date:'2026-09-16',kind:'expense',amount:650,valor:-650,conta_tipo:'BANK',description:'MBA'},
+  {id:'f',date:'2026-09-04',kind:'other',amount:2000,valor:-2000,natureza:'interna',conta_tipo:'BANK'},
+  {id:'g',date:'2026-09-30',kind:'income',amount:14000,valor:14000,salary_person:'aleph',is_salary:true,conta_tipo:'BANK'},
+ ];
+ const budget={lines:[]};
+ const result=cashflowSummary(rows,'2026-09',budget,{opening_balance:100,lines:[{id:'cards',name:'Cartões',budget:3500,funding:'aleph'},{id:'mba',name:'MBA',budget:650,funding:'bianca'}]});
+ assert.equal(result.start.start,'2026-08-28');
+ assert.equal(result.start.estimated,false);
+ assert.equal(result.end.start,'2026-09-30');
+ assert.equal(result.income,24000);
+ assert.equal(result.paid,3650);
+ assert.equal(result.balance,20450);
+ assert.equal(result.remaining,500);
+ assert.equal(cashflowCycle(rows[2],rows,budget),'2026-09');
+ assert.equal(cashflowCycle({...rows[2],cycle:'2026-08'},rows,budget),'2026-08');
+});

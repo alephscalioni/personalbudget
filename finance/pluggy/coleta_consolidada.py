@@ -280,7 +280,7 @@ def _do_dump(dias: int):
     return snap, status, contas_por_item, invs_por_item, por_conta, ident
 
 
-def coletar(dias: int, fonte: str = "api"):
+def coletar(dias: int, fonte: str = "api", strict: bool = False):
     d_to = date.today().isoformat()
     d_from = (date.today() - timedelta(days=dias)).isoformat()
     pg = None
@@ -312,11 +312,13 @@ def coletar(dias: int, fonte: str = "api"):
             try:
                 status_de[iid] = pg.item(iid).get("status")
             except PluggyError:
+                if strict: raise
                 status_de[iid] = "?"
             contas_de[iid] = pg.accounts(iid)
             try:
                 invs_de[iid] = pg.investments(iid)
             except PluggyError:
+                if strict: raise
                 invs_de[iid] = []
     num_de = {a["id"]: num_conta(a.get("number")) for lst in contas_de.values()
               for a in lst}

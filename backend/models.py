@@ -27,6 +27,9 @@ class Transaction(Model):
 
 
 class TransactionOverride(Model):
+    cashflow_line: str | None = Field(default=None, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
+    group: str | None = Field(default=None, min_length=1, max_length=80)
+    reviewed: bool = False
     salary_person: Literal['aleph', 'bianca'] | None = None
     cycle: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
     competence: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
@@ -63,3 +66,25 @@ class Position(Model):
     balance: float = Field(ge=0, le=1e12, multiple_of=0.01)
     reference: date
     asset_class: str = Field(default='Declarado', min_length=1, max_length=80)
+
+
+class CashflowLine(Model):
+    id: str = Field(min_length=1, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
+    name: str = Field(min_length=1, max_length=80)
+    budget: float | None = Field(default=None, ge=0, le=1e10, multiple_of=0.01)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    funding: Literal['pool','aleph','bianca'] = 'pool'
+    end_month: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
+
+
+class CashflowPlan(Model):
+    month: str = Field(pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
+    opening_balance: float = Field(default=0, ge=-1e10, le=1e10, multiple_of=0.01)
+    lines: list[CashflowLine] = Field(min_length=1, max_length=60)
+
+    @field_validator('lines')
+    @classmethod
+    def unique_lines(cls, lines):
+        if len({line.id for line in lines}) != len(lines):
+            raise ValueError('Cada linha precisa de um identificador único.')
+        return lines

@@ -23,6 +23,7 @@ sys.path.insert(0, str(root))
 from backend import auth, store
 if not auth.configured():
     raise SystemExit('Configure PERSONALBUDGET_PASSWORD_HASH and PERSONALBUDGET_SESSION_SECRET before deployment.')
+store.initialize()
 auth.seed_users()
 marker = data / '.planning-initialized'
 if not marker.exists() and (seed / 'planning.json').exists():

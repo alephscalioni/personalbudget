@@ -1751,3 +1751,14 @@ body.private .donut svg {
   .dashboard-filters summary span { float: none; display: block; margin-top: 8px; }
   .financial-dashboard .kpi-value { font-size: 21px; }
 }
+
+.guide-strip { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 0 0 18px; font-size:11px; color:var(--muted); flex-wrap:wrap; }
+.guide-strip > div { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.review-list { max-height:55vh; overflow-y:auto; }
+
+.cycle-window { display:grid; gap:8px; margin-bottom:20px; padding:18px; background:#edf1f7; border-radius:12px; font-size:13px; }
+.cycle-window small { color:var(--muted); }
+.flow-footer { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:20px 0; font-size:13px; }
+.flow-edit { border:1px solid var(--line); border-radius:8px; padding:14px; margin:14px 0; }
+.flow-edit legend { font-size:13px; }
+.flow-transaction { padding:9px 0; font-size:11px; max-width:350px; white-space:normal; }
