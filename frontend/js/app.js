@@ -760,7 +760,16 @@ document.addEventListener("click", async (event) => {
       document.querySelector("#privacy").click();
       render();
     }
-    if (action === "retry") await load();
+    if (action === "retry") {
+      button.disabled = true;
+      button.textContent = "Conectando…";
+      try {
+        await load();
+      } finally {
+        button.disabled = false;
+        button.textContent = "Tentar novamente";
+      }
+    }
   } catch (error) {
     toast(error.message);
   }

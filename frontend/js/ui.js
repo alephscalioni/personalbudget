@@ -48,17 +48,36 @@ export const progress = (v, t, cls = "") =>
 export const empty = (title, detail, action = "") =>
   `<div class="empty">${icon("leaf")}<h3>${esc(title)}</h3><p>${esc(detail)}</p>${action}</div>`;
 export async function api(path, method = "GET", body) {
-  const response = await fetch("/api/" + path, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : {},
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
+  let response;
+  // Only read requests can be safely repeated after a temporary outage.
+  const attempts = method === "GET" ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      response = await fetch("/api/" + path, {
+        method,
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: body ? { "Content-Type": "application/json" } : {},
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch {
+      if (attempt + 1 === attempts)
+        throw new Error("Não foi possível conectar ao servidor. Confira sua conexão e tente novamente.");
+    }
+    const unavailable = !response || [502, 503, 504].includes(response.status);
+    if (!unavailable || attempt + 1 === attempts) break;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(
       typeof error.detail === "string"
         ? error.detail
-        : "Confira os campos e tente novamente.",
+        : response.status >= 500
+          ? "O servidor está temporariamente indisponível. Aguarde um momento e tente novamente."
+          : response.status === 401
+            ? "Sua sessão expirou. Entre novamente."
+            : "Confira os campos e tente novamente.",
     );
   }
   return response.status === 204 ? null : response.json();

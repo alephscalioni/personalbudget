@@ -13,5 +13,5 @@ jobs:
           node-version: '24'
       - run: pip install -r backend/requirements.lock.txt
       - run: python -m unittest discover -s backend/tests -v
-      - run: node --test tests/finance.test.mjs
+      - run: node --test tests/*.test.mjs
       - run: node scripts/build-frontend.mjs
