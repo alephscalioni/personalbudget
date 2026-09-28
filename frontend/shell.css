@@ -1400,7 +1400,7 @@ body.private .donut svg {
   }
   nav {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(7, 1fr);
     gap: 2px;
     margin: 0;
     height: 100%;
@@ -1717,3 +1717,5 @@ body.private .donut svg {
 #kaleu-form textarea { display: block; width: 100%; margin: 10px 0; }
 .audit-entry { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .audit-entry pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.login-card .login-brand { display: flex; }
