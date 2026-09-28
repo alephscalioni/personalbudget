@@ -15,6 +15,7 @@ class Goal(Model):
 
 
 class Transaction(Model):
+    salary_person: Literal['aleph', 'bianca'] | None = None
     description: str = Field(min_length=1, max_length=180)
     amount: float = Field(gt=0, le=1e10, multiple_of=0.01)
     date: date
@@ -26,6 +27,7 @@ class Transaction(Model):
 
 
 class TransactionOverride(Model):
+    salary_person: Literal['aleph', 'bianca'] | None = None
     cycle: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
     competence: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
     kind: Literal['income', 'expense', 'refund', 'other'] | None = None

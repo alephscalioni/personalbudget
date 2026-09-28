@@ -6,7 +6,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 files = subprocess.check_output(['git','diff','--cached','--name-only'],cwd=root,text=True).splitlines()
-forbidden = re.compile(r'(^|/)(data|\.runtime|\.venv|seed)/|(^|/)\.env($|\.)|dashboard\.html$|\.(sqlite3?|db)$')
+forbidden = re.compile(r'(^|/)(data|\.runtime|\.venv|seed)/|(^|/)\.env($|\.)|dashboard\.html$|salary-rules\.json$|\.(sqlite3?|db)$')
 problems = [name for name in files if forbidden.search(name)]
 secrets = []
 for path in [root/'finance/pluggy/.env',root/'.env.local']:

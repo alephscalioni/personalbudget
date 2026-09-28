@@ -1719,3 +1719,9 @@ body.private .donut svg {
 .audit-entry pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .login-card .login-brand { display: flex; }
+
+.salary-panel { margin: 22px 0; }
+.salary-plan { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 20px; }
+.salary-plan p { margin: 9px 0; }
+.salary-plan small { color: var(--muted); }
+.salary-candidate { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; font-size: 12px; border-bottom: 1px solid var(--line); }

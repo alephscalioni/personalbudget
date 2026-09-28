@@ -169,3 +169,19 @@ test("cash, earned month and salary cycle remain distinct across year boundaries
   assert.equal(monthSummary(transactionsForBasis([purchase, payment], "cash"), "2026-12").spending, 0);
   assert.equal(monthSummary(transactionsForBasis([purchase, payment], "competence"), "2026-12").spending, 300);
 });
+
+test('salary attribution separates Bianca from transfers without adding income twice', async () => {
+  const {salaryBreakdown} = await import('../frontend/js/finance.js');
+  const rows = [
+    {kind:'income',salary_person:'bianca',is_salary:true,date:'2026-08-31',amount:10000,description:'Salário'},
+    {kind:'income',metodo:'Salário',date:'2026-09-01',amount:14000},
+    {kind:'income',date:'2026-09-04',amount:410,description:'PIX recebido BIANCA'},
+  ];
+  const salary = salaryBreakdown(rows,'2026-09');
+  assert.equal(salary.received.bianca,10000);
+  assert.equal(salary.received.aleph,0);
+  assert.equal(salary.unassigned,14000);
+  assert.equal(salary.candidates.length,1);
+  assert.equal(monthSummary(transactionsForBasis(rows,'cycle'),'2026-09').income,24410);
+  assert.equal(salaryBreakdown(rows,'2026-08').received.bianca,0);
+});

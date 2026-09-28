@@ -17,3 +17,5 @@ dist/
 skills/
 .vercel
 .env*
+
+finance/pluggy/salary-rules.json

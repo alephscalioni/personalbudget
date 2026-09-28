@@ -9,7 +9,7 @@ for directory in ['backend', 'frontend', 'finance/pluggy', 'scripts', 'deploymen
     shutil.copytree(root / directory, target / directory, copy_function=shutil.copyfile, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.env', '.env.*', 'dashboard.html'))
 for name in ['Dockerfile', '.dockerignore', 'railway.json']:
     shutil.copyfile(root/name, target/name)
-for name in ['premissas-fluxo.json', 'contrapartes.json', 'mascara.json', 'posicoes-manuais.json']:
+for name in ['salary-rules.json', 'premissas-fluxo.json', 'contrapartes.json', 'mascara.json', 'posicoes-manuais.json']:
     path = target/'finance/pluggy'/name
     if path.exists():
         path.unlink()

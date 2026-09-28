@@ -4,6 +4,7 @@ from collections import Counter
 import contextlib
 import io
 import json
+import re
 import sys
 from functools import lru_cache
 
@@ -17,6 +18,15 @@ from gera_dashboard_consolidado import aplica_contrapartes, aplica_mascara, apli
 
 def latest():
     return max(REPORTS.glob('consolidado-*.json'), default=None)
+
+
+def salary_plan():
+    path = FINANCE_CONFIG / 'premissas-fluxo.json'
+    if not path.exists():
+        path = FINANCE / 'premissas-fluxo.example.json'
+    income = json.loads(path.read_text()).get('renda_mensal', {})
+    return [{'person': 'aleph', 'name': 'Aleph', 'net': income.get('aleph_liquido', 0), 'gross': income.get('aleph_bruto'), 'regime': 'CLT'},
+            {'person': 'bianca', 'name': 'Bianca', 'net': income.get('bia_liquido', 0), 'gross': income.get('bia_bruto_pj'), 'regime': 'PJ'}]
 
 
 def default_budget():
@@ -38,6 +48,19 @@ def snapshot(path, fingerprints):
         digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()[:32]
         seen[digest] += 1
         t['id'] = f'bank-{digest}-{seen[digest]}'
+    # Confirmed payer rules only annotate an existing bank credit; no income is added.
+    rules_path = FINANCE_CONFIG / 'salary-rules.json'
+    rules = json.loads(rules_path.read_text()).get('rules', []) if rules_path.exists() else []
+    for t in payload['lancamentos']:
+        if t.get('conta_tipo') == 'CREDIT' or t.get('valor', 0) <= 0 or t.get('natureza') != 'entrada' or t.get('externa'):
+            continue
+        digits = re.sub(r'\D', '', t.get('desc', ''))
+        for rule in rules:
+            root = rule.get('payer_root', '')
+            if len(root) == 8 and root.isdigit() and digits.startswith(root) and rule.get('person') in ('aleph','bianca'):
+                t['salary_person'] = rule['person']
+                t['is_salary'] = True
+                break
     # Existing classification helpers can log personal transaction descriptions.
     with contextlib.redirect_stdout(io.StringIO()):
         aplica_contrapartes(payload)
@@ -50,12 +73,12 @@ def data():
     path = latest()
     if path is None:
         raise FileNotFoundError('Nenhum consolidado disponível. Adicione um arquivo em data/reports.')
-    deps = [path, *(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json'])]
+    deps = [path, *(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json', 'salary-rules.json'])]
     payload = snapshot(path, tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in deps))
     payload, declared = positions.apply(payload)
     budgets = store.all_of('budget')
     return {'source': path.name, 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
-            'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
+            'salary_plan': salary_plan(), 'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
 
 
 def classifier_module():

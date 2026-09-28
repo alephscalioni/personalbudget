@@ -5,6 +5,7 @@ import {
   competenceMonth,
   cycleMonth,
   transactionsForBasis,
+  salaryBreakdown,
   budgetSummary,
   monthSequence,
   csvCell,
@@ -232,6 +233,13 @@ function cycleDetails() {
   const bills = sum(due.filter(t => t.natureza === "fatura").map(t => t.amount));
   return `<section class="panel cycle-note"><h2>Primeira quinzena · ${monthName(state.month)}</h2><p>Total bancário sem filtros, registrado até o dia 15: ${amount(sum(due.map(t => t.amount)))}. Pagamentos de cartões nesse período: ${amount(bills)}.</p><p>Seu calendário: cartões na primeira semana, condomínio no dia 10 e depois luz${state.month <= "2026-12" ? "; MBA previsto até dezembro de 2026" : ""}. Os valores acima são realizados; contas futuras ainda não pagas não estão incluídas.</p></section>`;
 }
+function salariesPanel() {
+  const plan = state.data.salary_plan || [];
+  if (!plan.length) return "";
+  const rows = monthSequence(state.month, 6).reverse();
+  const current = salaryBreakdown(state.transactions, state.month, state.data.budget);
+  return `<section class="panel salary-panel"><div class="panel-head"><div><h2>Salários mês a mês</h2><p>Ciclo do salário · valores por pessoa, sem repetir receitas do extrato</p></div></div><div class="salary-plan">${plan.map(p => `<div><b>${esc(p.name)} · ${esc(p.regime)}</b><p>Líquido previsto: ${amount(p.net)}</p>${p.gross == null ? "" : `<small>Bruto de referência: ${amount(p.gross)}</small>`}</div>`).join("")}</div><p class="info-note">Estes são os valores atuais do planejamento, não recebimentos históricos confirmados. Os totais abaixo usam salários atribuídos a cada pessoa. “Não identificado” não significa que não houve pagamento.</p><div class="table-wrap"><table><thead><tr><th>Ciclo</th><th>Aleph · identificado</th><th>Bianca · identificado</th><th>Salários sem titular</th></tr></thead><tbody>${rows.map(month => {const s = salaryBreakdown(state.transactions, month, state.data.budget);return `<tr><td>${esc(monthName(month))}</td><td>${s.received.aleph ? amount(s.received.aleph) : '<span class="muted">Não identificado</span>'}</td><td>${s.received.bianca ? amount(s.received.bianca) : '<span class="muted">Não identificado</span>'}</td><td>${s.unassigned ? amount(s.unassigned) : '—'}</td></tr>`;}).join("")}</tbody></table></div>${current.candidates.length ? `<details><summary>Repasses da Bianca no mês: ${current.candidates.length} para conferir</summary><p class="info-note">PIX da Bianca pode ser salário, transferência ou reembolso. Confirme a finalidade antes de marcar como salário.</p>${current.candidates.map(t => `<div class="salary-candidate"><span>${dateName(t.date)} · ${esc(t.description)} · ${amount(t.amount)}</span><button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Identificar</button></div>`).join("")}</details>` : ""}<p class="info-note">Para atribuir um recebimento bancário, abra Transações → Ajustar → Titular do salário. Se o recebimento não está no extrato, registre um lançamento manual como salário e informe o titular.</p></section>`;
+}
 function overview() {
   const d = wealth(),
     s = getSummary(),
@@ -247,7 +255,7 @@ function overview() {
       `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
     ) + `<p class="info-note">${basisNote()}</p>${declaredControl()}${filterControls()}${cycleDetails()}` +
     `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, `<span class="dot"></span> Posição de ${dateName(d.gerado_em)}`, "overview", true)}${kpi(state.basis === "cash" ? "Entradas de caixa" : "Receitas do mês", s.income, "Conforme visão e filtros selecionados", "down", false, "positive")}${kpi(state.basis === "cash" ? "Saídas de caixa" : "Despesas do mês", s.spending, "Conforme visão e filtros selecionados", "arrow")}${kpi("Resultado do mês", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas no período`, "leaf", false, s.balance < 0 ? "negative" : "")}</div>
- <div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>Entradas e saídas</h2><p>Seu movimento ao longo dos meses</p></div><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>${latest ? "Mês atual em andamento" : "Mês selecionado"} · resultado por competência</span><a class="text-button" href="#transactions">Ver transações ↗</a></div></section>
+ ${salariesPanel()}<div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>Entradas e saídas</h2><p>Seu movimento ao longo dos meses</p></div><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>${latest ? "Mês atual em andamento" : "Mês selecionado"} · resultado por competência</span><a class="text-button" href="#transactions">Ver transações ↗</a></div></section>
  <section class="panel"><div class="panel-head"><div><h2>Para onde vai seu dinheiro</h2><p>Distribuição dos gastos do mês</p></div><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
  <div class="insight">${icon("leaf")}<div><b>${b.remaining >= 0 ? "Seu planejamento tem espaço para respirar." : "Hora de dar atenção ao orçamento."}</b><p>${b.remaining >= 0 ? `Restam ${amount(b.remaining)} no limite mensal.` : `O consumo supera o limite em ${amount(-b.remaining)}.`} ${over ? `${over} ${over === 1 ? "categoria passou" : "categorias passaram"} do limite.` : "Acompanhe os limites por categoria."} Inclui VA/VR estimado.</p></div><a class="text-button" href="#budget">Revisar orçamento →</a></div>
  <section class="panel transactions-panel"><div class="panel-head"><div><h2>Últimas transações</h2><p>Os movimentos mais recentes do mês</p></div><a class="text-button" href="#transactions">Ver todas →</a></div>${rowTable(recent)}</section>
@@ -499,7 +507,7 @@ async function load() {
         t = {
           ...t,
           ...Object.fromEntries(
-            Object.entries(override).filter(([, value]) => value !== null),
+            Object.entries(override).filter(([key, value]) => value !== null || key === "salary_person"),
           ),
         };
         t.adjusted = true;
@@ -657,14 +665,15 @@ function classificationForm(id) {
         ["other", "Fora do resultado"],
       ],
       t.kind,
-    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(competenceMonth(t, state.data.budget))}" required></label><label>Ciclo de pagamento<input name="cycle" type="month" value="${esc(cycleMonth(t, state.data.budget))}"></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
+    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(competenceMonth(t, state.data.budget))}" required></label><label>Ciclo de pagamento<input name="cycle" type="month" value="${esc(cycleMonth(t, state.data.budget))}"></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label><label>Titular do salário<select name="salary_person">${options([["", "Não informado"], ["aleph", "Aleph"], ["bianca", "Bianca"]], t.salary_person || "")}</select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
   );
   bindForm(async (f) =>
     api("transactions/" + id + "/classification", "PUT", {
       kind: f.get("kind"),
       competence: f.get("competence"),
       cycle: f.get("cycle") || null,
-      is_salary: f.get("is_salary") === "true",
+      salary_person: f.get("salary_person") || null,
+      is_salary: f.get("is_salary") === "true" || Boolean(f.get("salary_person")),
     }),
   );
 }
@@ -689,7 +698,7 @@ function transactionForm() {
     `<form><div class="form-grid"><label class="full">Descrição<input name="description" required maxlength="180" placeholder="Ex.: almoço, pagamento extra" autofocus></label><label>Tipo<select name="kind"><option value="expense">Despesa</option><option value="income">Receita</option></select></label><label>Valor (R$)<input name="amount" type="number" min="0.01" max="10000000000" step="0.01" required placeholder="0,00"></label><label>Data<input name="date" type="date" value="${date}" required></label><label>Categoria<select name="group">${options(
       groups.map((g) => [g, g]),
       "Outros",
-    )}</select></label><label>Competência (opcional)<input name="competence" type="month"></label><label>Origem<select name="is_salary"><option value="false">Movimento comum</option><option value="true">Salário</option></select></label><label class="full">Observação (opcional)<textarea name="note" maxlength="500" placeholder="Um detalhe para lembrar depois"></textarea></label></div><p class="info-note">Este registro entra no resultado mensal, sem alterar o saldo bancário. Se aparecer numa coleta futura, exclua o registro manual para evitar duplicidade.</p>${formFooter("Adicionar lançamento")}</form>`,
+    )}</select></label><label>Competência (opcional)<input name="competence" type="month"></label><label>Origem<select name="is_salary"><option value="false">Movimento comum</option><option value="true">Salário</option></select></label><label>Titular do salário<select name="salary_person"><option value="">Não informado</option><option value="aleph">Aleph</option><option value="bianca">Bianca</option></select></label><label class="full">Observação (opcional)<textarea name="note" maxlength="500" placeholder="Um detalhe para lembrar depois"></textarea></label></div><p class="info-note">Este registro entra no resultado mensal, sem alterar o saldo bancário. Se aparecer numa coleta futura, exclua o registro manual para evitar duplicidade.</p>${formFooter("Adicionar lançamento")}</form>`,
   );
   bindForm(async (f) => {
     await api("transactions", "POST", {
@@ -699,14 +708,15 @@ function transactionForm() {
       kind: f.get("kind"),
       group: f.get("group"),
       note: f.get("note"),
+      salary_person: f.get("salary_person") || null,
       competence: f.get("competence") || null,
-      is_salary: f.get("is_salary") === "true",
+      is_salary: f.get("is_salary") === "true" || Boolean(f.get("salary_person")),
     });
     state.month = (state.basis === "cycle" ? cycleMonth : state.basis === "competence" ? competenceMonth : t => t.date.slice(0,7))(
       {
         date: f.get("date"),
         kind: f.get("kind"),
-        is_salary: f.get("is_salary") === "true",
+        is_salary: f.get("is_salary") === "true" || Boolean(f.get("salary_person")),
         competence: f.get("competence") || null,
       },
       state.data.budget,

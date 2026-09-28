@@ -57,7 +57,7 @@ export function cycleMonth(transaction, budget = {}) {
   const month = transaction.date.slice(0, 7);
   const salary =
     transaction.kind === "income" &&
-    (transaction.is_salary ||
+    (transaction.is_salary || transaction.salary_person ||
       transaction.metodo === "Salário" ||
       transaction.categoria === "Salary" ||
       transaction.categoria === "Salaries");
@@ -71,7 +71,7 @@ export function cycleMonth(transaction, budget = {}) {
 export function competenceMonth(transaction, budget = {}) {
   if (transaction.competence) return transaction.competence;
   const month = transaction.date.slice(0, 7);
-  const salary = transaction.kind === "income" && (transaction.is_salary || transaction.metodo === "Salário" || ["Salary", "Salaries"].includes(transaction.categoria));
+  const salary = transaction.kind === "income" && (transaction.is_salary || transaction.salary_person || transaction.metodo === "Salário" || ["Salary", "Salaries"].includes(transaction.categoria));
   if (salary && Number(transaction.date.slice(8, 10)) === 1 && budget.salary_next_month !== false) {
     return monthSequence(month, 2)[0];
   }
@@ -92,4 +92,22 @@ export function transactionsForBasis(transactions, basis = "cycle", budget = {})
     }
     return { ...t, kind, group, competence: t.date.slice(0, 7) };
   });
+}
+
+
+export function salaryBreakdown(transactions, month, budget = {}) {
+  const received = {aleph: 0, bianca: 0};
+  let unassigned = 0;
+  const candidates = [];
+  for (const t of transactions) {
+    if (t.kind !== "income") continue;
+    const salary = t.is_salary || t.salary_person || t.metodo === "Salário" || ["Salary", "Salaries"].includes(t.categoria);
+    if (salary && cycleMonth(t, budget) === month) {
+      if (t.salary_person in received) received[t.salary_person] = round(received[t.salary_person] + t.amount);
+      else unassigned = round(unassigned + t.amount);
+    }
+    // Display transfers as candidates only; payer names alone do not prove salary.
+    if (!salary && /bianca/i.test(t.description || "") && cycleMonth(t, budget) === month) candidates.push(t);
+  }
+  return {received, unassigned, candidates};
 }

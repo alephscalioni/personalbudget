@@ -220,6 +220,37 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/audit', headers=headers).json()['entries'][0]['actor'], 'kaleu')
             self.assertEqual(self.client.get('/api/data', headers={'Authorization':'Bearer wrong'}).status_code, 401)
 
+    def test_salary_plan_and_recipient_are_preserved(self):
+        data = self.client.get('/api/data').json()
+        self.assertEqual([p['person'] for p in data['salary_plan']], ['aleph','bianca'])
+        body = {'description':'Salário Bianca', 'amount':10000, 'date':'2026-08-31', 'kind':'income', 'group':'Salário', 'is_salary':True, 'salary_person':'bianca'}
+        self.assertEqual(self.client.post('/api/transactions', json=body).status_code, 201)
+        self.assertEqual(self.client.get('/api/data').json()['manual'][0]['salary_person'], 'bianca')
+        self.assertEqual(self.client.post('/api/transactions', json={**body,'salary_person':'unknown'}).status_code, 422)
+        bank_id = data['finance']['lancamentos'][0]['id']
+        r = self.client.put('/api/transactions/' + bank_id + '/classification', json={'kind':'income','is_salary':True,'salary_person':'bianca','cycle':'2026-09'})
+        self.assertEqual(r.status_code,200)
+        self.assertEqual(r.json()['salary_person'],'bianca')
+
+    def test_confirmed_company_salary_rule_preserves_bank_totals(self):
+        root = Path(self.directory.name)
+        (root / 'salary-rules.json').write_text(json.dumps({'rules':[{'person':'bianca','payer_root':'12345678'}]}))
+        report = root / 'consolidado-2026-09-27.json'
+        raw = json.loads(report.read_text())
+        incoming = {'data':'2026-08-31','desc':'Pix recebido 12.345.678 BIANCA','valor':10000,'tipo':'CREDIT','categoria':'Transfer','natureza':'entrada','metodo':'PIX'}
+        raw['instituicoes'][0]['contas'][0]['lancamentos'] = [incoming, {**incoming,'desc':'Pix recebido BIANCA','valor':410}, {**incoming,'valor':-100,'natureza':'consumo','tipo':'DEBIT'}]
+        report.write_text(json.dumps(raw))
+        with patch.object(service,'FINANCE_CONFIG',root):
+            service.snapshot.cache_clear()
+            rows = self.client.get('/api/data').json()['finance']['lancamentos']
+        self.assertEqual(rows[0]['salary_person'],'bianca')
+        self.assertTrue(rows[0]['is_salary'])
+        self.assertEqual(rows[0]['data'],'2026-08-31')
+        self.assertEqual(rows[0]['valor'],10000)
+        self.assertNotIn('salary_person',rows[1])
+        self.assertNotIn('salary_person',rows[2])
+        self.assertEqual(len(rows),3)
+
 
 if __name__ == '__main__':
     unittest.main()
