@@ -44,7 +44,13 @@ def preserve_history(raw, previous):
         for account in institution.get('contas', []):
             retained = [t for t in old.get(account.get('id'),{}).get('lancamentos',[]) if t['data'][:10] < cutoff]
             account['lancamentos'].extend(retained)
+            if account.get('tipo') != 'CREDIT' and 'saldo_inicial' in account:
+                account['saldo_inicial'] = round(account['saldo_inicial'] - sum(t['valor'] for t in retained), 2)
+            for bill, totals in old.get(account.get('id'),{}).get('faturas',{}).items():
+                if bill[:10] < cutoff:
+                    account.setdefault('faturas',{}).setdefault(bill,totals)
     raw['janela'][0] = min(cutoff, previous['janela'][0])
+    raw['caixa_inicial'] = round(sum(c.get('saldo_inicial',0) for i in raw['instituicoes'] for c in i.get('contas',[]) if c.get('tipo')!='CREDIT'),2)
     return raw
 
 

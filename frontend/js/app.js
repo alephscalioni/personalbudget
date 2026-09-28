@@ -281,7 +281,7 @@ function cashflowForm() {
 function pendingReviews() {
   return state.transactions.filter(t => !t.manual && !t.reviewed &&
     ((t.salary_candidate && !t.salary_person) || (["expense", "refund"].includes(t.kind) && ["Outros", "Transferências", "Sem categoria"].includes(t.group)) ||
-     (t.kind === "income" && (t.is_salary || t.metodo === "Salário") && !t.salary_person)));
+     (t.kind === "income" && (t.is_salary || t.metodo === "Salário") && !t.salary_person))).sort((a,b)=>Number(Boolean(b.salary_candidate))-Number(Boolean(a.salary_candidate)));
 }
 function syncLabel() {
   const sync = state.data.sync || {};

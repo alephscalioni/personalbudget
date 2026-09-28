@@ -115,7 +115,7 @@ export function salaryBreakdown(transactions, month, budget = {}) {
 // Cash planning follows the salary funding window, not purchase competence.
 export function salaryWindow(transactions, month, budget = {}) {
   const previous = monthSequence(month, 2)[0];
-  const anchors = transactions.filter(t => t.kind === 'income' && t.salary_person === 'aleph' && cycleMonth(t,budget) === month && t.date.slice(0,7) === previous && Number(t.date.slice(8,10)) >= (budget.salary_cutoff_day ?? 25));
+  const anchors = transactions.filter(t => t.kind === 'income' && t.salary_person === 'aleph' && cycleMonth(t,budget) === month && ((t.date.slice(0,7) === previous && Number(t.date.slice(8,10)) >= (budget.salary_cutoff_day ?? 25)) || (t.date.slice(0,7) === month && Number(t.date.slice(8,10)) <= 3)));
   if (anchors.length) return {start: anchors.map(t => t.date).sort()[0], estimated:false};
   const [year, m] = month.split('-').map(Number);
   const date = new Date(year, m-1, 0);
