@@ -26,6 +26,7 @@ class Transaction(Model):
 
 
 class TransactionOverride(Model):
+    cycle: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
     competence: str | None = Field(default=None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$')
     kind: Literal['income', 'expense', 'refund', 'other'] | None = None
     is_salary: bool = False
@@ -52,3 +53,11 @@ class Budget(Model):
         if len(groups) != len(set(groups)):
             raise ValueError('Um grupo não pode aparecer em dois limites.')
         return lines
+
+
+class Position(Model):
+    name: str = Field(min_length=1, max_length=120)
+    institution: str = Field(min_length=1, max_length=80)
+    balance: float = Field(ge=0, le=1e12, multiple_of=0.01)
+    reference: date
+    asset_class: str = Field(default='Declarado', min_length=1, max_length=80)

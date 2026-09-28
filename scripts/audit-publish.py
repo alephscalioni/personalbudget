@@ -22,6 +22,9 @@ for path in [root/'finance/pluggy/.env',root/'.env.local']:
 access=root/'.runtime/cloud-access.json'
 if access.exists():
     secrets.extend(str(v) for v in json.loads(access.read_text()).values())
+kaleu_access=root/'.runtime/kaleu-access.json'
+if kaleu_access.exists():
+    secrets.append(json.loads(kaleu_access.read_text())['token'])
 for name in files:
     body=subprocess.check_output(['git','show',':'+name],cwd=root).decode(errors='replace')
     if any(secret in body for secret in secrets):

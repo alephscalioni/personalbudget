@@ -3,6 +3,8 @@ import {
   expense,
   monthSummary,
   competenceMonth,
+  cycleMonth,
+  transactionsForBasis,
   budgetSummary,
   monthSequence,
   csvCell,
@@ -28,6 +30,7 @@ const pages = {
   accounts: "Contas e cartões",
   goals: "Metas",
   settings: "Ajustes",
+  kaleu: "Kaleu",
 };
 const mobileNames = {
   overview: "Início",
@@ -36,6 +39,7 @@ const mobileNames = {
   accounts: "Contas",
   goals: "Metas",
   settings: "Ajustes",
+  kaleu: "Kaleu",
 };
 const state = {
   data: null,
@@ -47,6 +51,10 @@ const state = {
   institution: "all",
   group: "all",
   pagination: 1,
+  basis: "cycle",
+  source: "all",
+  includeDeclared: true,
+  kaleuMessages: [],
 };
 const content = document.querySelector("#content");
 const modal = document.querySelector("#modal");
@@ -100,7 +108,7 @@ function pageHead(title, description, action = "", withMonth = true) {
   const months = [
     ...new Set([
       state.data.finance.gerado_em.slice(0, 7),
-      ...state.transactions.map((t) => t.competence || t.date.slice(0, 7)),
+      ...state.transactions.flatMap((t) => [t.date.slice(0, 7), competenceMonth(t, state.data.budget), cycleMonth(t, state.data.budget)]),
     ]),
   ]
     .sort()
@@ -110,18 +118,37 @@ function pageHead(title, description, action = "", withMonth = true) {
       ? `<select id="month" class="month-select" aria-label="Mês de referência">${options(
           months.map((m) => [m, monthName(m)]),
           state.month,
-        )}</select>`
+        )}</select>${["overview", "transactions"].includes(state.page) ? `<select id="basis" aria-label="Visão financeira">${options([["cycle", "Ciclo do salário"], ["cash", "Caixa · data bancária"], ["competence", "Competência"]], state.basis)}</select>` : ""}`
       : ""
   }${action}</div></div>`;
 }
 function kpi(title, value, note, symbol, featured = false, cls = "") {
   return `<article class="kpi ${featured ? "featured" : ""}"><div class="kpi-title">${title}${icon(symbol)}</div><div class="kpi-value ${cls}">${amount(value)}</div><div class="kpi-note">${note}</div></article>`;
 }
-function getSummary() {
-  return monthSummary(state.transactions, state.month);
+function viewTransactions() {
+  const basis = state.page === "budget" ? "cycle" : state.basis;
+  return transactionsForBasis(state.transactions, basis, state.data.budget);
 }
+function matchesFilters(t) {
+  const query = state.search.toLocaleLowerCase("pt-BR");
+  return (state.kind === "all" || t.kind === state.kind)
+    && (state.institution === "all" || t.instituicao === state.institution)
+    && (state.group === "all" || t.group === state.group)
+    && (state.source === "all" || Boolean(t.manual) === (state.source === "manual"))
+    && [t.description, t.group, t.instituicao, t.note].some(v => String(v || "").toLocaleLowerCase("pt-BR").includes(query));
+}
+function getSummary() {
+  const rows = viewTransactions();
+  return monthSummary(state.page === "budget" ? rows : rows.filter(matchesFilters), state.month);
+}
+function basisNote() {
+  return state.basis === "cash" ? "Caixa: entradas e saídas das contas na data bancária, incluindo faturas, aplicações e transferências. Compras no cartão não saem do caixa novamente."
+    : state.basis === "competence" ? "Competência: mês informado do gasto ou da renda. Sem ajuste, usa a data do lançamento; salário recebido no dia 01 é atribuído ao mês trabalhado anterior."
+    : "Ciclo do salário: recebimentos do fim do mês e do dia 01 financiam o mesmo mês de contas. Cartões usam o mês da fatura, quando informado. Compras e pagamentos de fatura não são somados duas vezes.";
+}
+
 function getBudget() {
-  return budgetSummary(state.data.budget, getSummary());
+  return budgetSummary(state.data.budget, monthSummary(transactionsForBasis(state.transactions, "cycle", state.data.budget), state.month));
 }
 function rowTable(rows, full = false) {
   if (!rows.length)
@@ -137,14 +164,14 @@ function rowTable(rows, full = false) {
         : t.kind === "expense"
           ? -t.amount
           : (t.valor ?? 0);
-      return `<tr><td><div class="transaction-name"><span class="transaction-icon ${positive ? "income" : ""}">${icon(positive ? "down" : t.kind === "other" ? "transactions" : "arrow")}</span><div><b title="${esc(t.description)}">${esc(t.description)}</b><small>${t.manual ? "Registro manual" : esc(t.conta_tipo === "CREDIT" ? "Cartão de crédito" : t.instituicao)}${t.kind === "refund" ? " · Estorno" : t.kind === "other" ? " · Fora do resultado" : ""}</small></div></div></td><td><span class="pill">${esc(t.group)}</span></td>${full ? `<td class="note-small">${esc(t.instituicao)}</td>` : ""}<td class="note-small">${dateName(t.date).slice(0, 5)}${t.competence !== t.date.slice(0, 7) ? `<br><span class="pill">Ref. ${esc(monthName(t.competence, true))}</span>` : ""}</td><td class="right money-cell ${positive ? "positive" : t.kind === "other" ? "neutral" : ""}">${amount(signed)}</td>${full ? `<td>${t.manual ? `<button class="icon-button" data-action="delete-transaction" data-id="${esc(t.id)}" aria-label="Excluir ${esc(t.description)}">×</button>` : `<button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}" aria-label="Ajustar competência de ${esc(t.description)}">Ajustar</button>`}</td>` : ""}</tr>`;
+      return `<tr><td><div class="transaction-name"><span class="transaction-icon ${positive ? "income" : ""}">${icon(positive ? "down" : t.kind === "other" ? "transactions" : "arrow")}</span><div><b title="${esc(t.description)}">${esc(t.description)}</b><small>${t.manual ? "Registro manual" : esc(t.conta_tipo === "CREDIT" ? "Cartão de crédito" : t.instituicao)}${t.kind === "refund" ? " · Estorno" : t.kind === "other" ? " · Fora do resultado" : ""}</small></div></div></td><td><span class="pill">${esc(t.group)}</span></td>${full ? `<td class="note-small">${esc(t.instituicao)}</td>` : ""}<td class="note-small">${dateName(t.date).slice(0, 5)}${t.competence && t.competence !== t.date.slice(0, 7) ? `<br><span class="pill">Ref. ${esc(monthName(t.competence, true))}</span>` : ""}</td><td class="right money-cell ${positive ? "positive" : t.kind === "other" ? "neutral" : ""}">${amount(signed)}</td>${full ? `<td>${t.manual ? `<button class="icon-button" data-action="delete-transaction" data-id="${esc(t.id)}" aria-label="Excluir ${esc(t.description)}">×</button>` : `<button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}" aria-label="Ajustar competência de ${esc(t.description)}">Ajustar</button>`}</td>` : ""}</tr>`;
     })
     .join("")}</tbody></table></div>`;
 }
 function cashChart() {
   const months = monthSequence(state.month, 6);
   const records = months.map((m) => ({
-    ...monthSummary(state.transactions, m),
+    ...monthSummary(viewTransactions().filter(matchesFilters), m),
     month: m,
   }));
   const max = Math.max(
@@ -163,27 +190,50 @@ function categoryChart(summary) {
       "Um mês sem despesas",
       "Os gastos por categoria aparecerão aqui.",
     );
-  const groups = sorted.slice(0, 5);
-  if (sorted.length > 5)
-    groups.push(["Demais categorias", sum(sorted.slice(5).map(([, v]) => v))]);
+  const groups = sorted;
   const total = sum(groups.map(([, v]) => v));
   let offset = 0;
   const rings = groups
     .map(([name, value], i) => {
       const dash = (value / total) * 100;
-      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="${chartColor[i]}" stroke-width="11" pathLength="100" stroke-dasharray="${Math.max(0, dash - 0.8)} ${100 - Math.max(0, dash - 0.8)}" stroke-dashoffset="${-offset}"><title>${esc(name)}</title></circle>`;
+      const circle = `<circle cx="50" cy="50" r="40" fill="none" stroke="hsl(${215 + i * 47} 35% 55%)" stroke-width="11" pathLength="100" stroke-dasharray="${Math.max(0, dash - 0.8)} ${100 - Math.max(0, dash - 0.8)}" stroke-dashoffset="${-offset}"><title>${esc(name)} · ${Math.round(value / total * 100)}%</title></circle>`;
       offset += dash;
       return circle;
     })
     .join("");
-  return `<div class="donut-layout"><div class="donut"><svg viewBox="0 0 100 100" aria-hidden="true">${rings}</svg><div class="donut-center"><span>Despesas líquidas</span><b>${amount(summary.spending)}</b></div></div></div><div class="category-list">${groups.map(([name, value], i) => `<div class="category-row"><i style="background:${chartColor[i]}"></i><span>${esc(name)}</span><b>${amount(value)}</b></div>`).join("")}</div>`;
+  return `<div class="donut-layout"><div class="donut"><svg viewBox="0 0 100 100" aria-hidden="true">${rings}</svg><div class="donut-center"><span>Categorias com gasto</span><b>${amount(total)}</b></div></div></div><div class="category-list">${groups.map(([name, value], i) => `<button type="button" class="category-row category-button" data-action="category-filter" data-group="${esc(name)}"><i style="background:hsl(${215 + i * 47} 35% 55%)"></i><span>${esc(name)} <small>${(value / total * 100).toFixed(1)}%</small></span><b>${amount(value)}</b></button>`).join("")}</div>`;
 }
 function budgetItem(line) {
   const ratio = percent(line.spent, line.teto);
   return `<div class="budget-item"><div class="budget-line"><span>${esc(line.nome)}</span><span>${amount(line.spent)} <small>/ ${amount(line.teto)}</small></span></div>${progress(line.spent, line.teto, line.spent > line.teto ? "over" : ratio > 80 ? "warn" : "")}<div class="budget-sub"><span>${line.spent > line.teto ? "Acima do limite" : `${Math.round(ratio)}% utilizado`}</span><span>${amount(Math.abs(line.teto - line.spent))} ${line.spent > line.teto ? "acima" : "restantes"}</span></div></div>`;
 }
+function wealth() {
+  const d = structuredClone(state.data.finance);
+  if (state.includeDeclared) return d;
+  const declared = d.investimentos.filter(v => v.manual);
+  const total = sum(declared.map(v => v.saldo));
+  d.resumo.liquido -= total;
+  d.resumo.investimentos -= total;
+  d.investimentos = d.investimentos.filter(v => !v.manual);
+  d.instituicoes.forEach(i => {
+    const value = sum(declared.filter(v => v.instituicao === i.nome).map(v => v.saldo));
+    i.investimentos -= value;
+    i.liquido -= value;
+  });
+  return d;
+}
+function declaredControl() {
+  return `<label class="declared-toggle"><input type="checkbox" id="include-declared" ${state.includeDeclared ? "checked" : ""}> Incluir saldos declarados no patrimônio <span class="money">(${money(state.data.finance.manual_total || 0)})</span></label>`;
+}
+function cycleDetails() {
+  if (state.basis !== "cycle") return "";
+  const bank = transactionsForBasis(state.transactions, "cash", state.data.budget);
+  const due = bank.filter(t => !t.manual && t.date.slice(0, 7) === state.month && Number(t.date.slice(8, 10)) <= 15 && t.kind === "expense");
+  const bills = sum(due.filter(t => t.natureza === "fatura").map(t => t.amount));
+  return `<section class="panel cycle-note"><h2>Primeira quinzena · ${monthName(state.month)}</h2><p>Saídas bancárias registradas até o dia 15: ${amount(sum(due.map(t => t.amount)))}. Pagamentos de cartões nesse período: ${amount(bills)}.</p><p>Seu calendário: cartões na primeira semana, condomínio no dia 10, depois luz e MBA até dezembro de 2026. Os valores acima são realizados; contas futuras ainda não pagas não estão incluídas.</p></section>`;
+}
 function overview() {
-  const d = state.data.finance,
+  const d = wealth(),
     s = getSummary(),
     b = getBudget();
   const latest = state.data.finance.gerado_em.slice(0, 7) === state.month;
@@ -195,8 +245,8 @@ function overview() {
       "Seu dinheiro, em perspectiva.",
       "Tudo o que você precisa para acompanhar sua vida financeira.",
       `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
-    ) +
-    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, `<span class="dot"></span> Posição de ${dateName(d.gerado_em)}`, "overview", true)}${kpi("Receitas do mês", s.income, "Entradas identificadas no extrato", "down", false, "positive")}${kpi("Despesas do mês", s.spending, "Consumo, já descontados os estornos", "arrow")}${kpi("Resultado do mês", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas no período`, "leaf", false, s.balance < 0 ? "negative" : "")}</div>
+    ) + `<p class="info-note">${basisNote()}</p>${declaredControl()}${filterControls()}${cycleDetails()}` +
+    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, `<span class="dot"></span> Posição de ${dateName(d.gerado_em)}`, "overview", true)}${kpi(state.basis === "cash" ? "Entradas de caixa" : "Receitas do mês", s.income, "Conforme visão e filtros selecionados", "down", false, "positive")}${kpi(state.basis === "cash" ? "Saídas de caixa" : "Despesas do mês", s.spending, "Conforme visão e filtros selecionados", "arrow")}${kpi("Resultado do mês", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas no período`, "leaf", false, s.balance < 0 ? "negative" : "")}</div>
  <div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>Entradas e saídas</h2><p>Seu movimento ao longo dos meses</p></div><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>${latest ? "Mês atual em andamento" : "Mês selecionado"} · resultado por competência</span><a class="text-button" href="#transactions">Ver transações ↗</a></div></section>
  <section class="panel"><div class="panel-head"><div><h2>Para onde vai seu dinheiro</h2><p>Distribuição dos gastos do mês</p></div><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
  <div class="insight">${icon("leaf")}<div><b>${b.remaining >= 0 ? "Seu planejamento tem espaço para respirar." : "Hora de dar atenção ao orçamento."}</b><p>${b.remaining >= 0 ? `Restam ${amount(b.remaining)} no limite mensal.` : `O consumo supera o limite em ${amount(-b.remaining)}.`} ${over ? `${over} ${over === 1 ? "categoria passou" : "categorias passaram"} do limite.` : "Acompanhe os limites por categoria."} Inclui VA/VR estimado.</p></div><a class="text-button" href="#budget">Revisar orçamento →</a></div>
@@ -215,20 +265,20 @@ function overview() {
  <p class="info-note">Patrimônio é a posição do último consolidado, incluindo posições declaradas. O resultado mensal exclui transferências próprias, aplicações, pagamento de fatura e eventos patrimoniais identificados. Valores manuais entram no resultado, sem alterar o saldo bancário.</p>`
   );
 }
+function filterControls() {
+  return `<div class="filters"><label class="search-input">${icon("search")}<input type="search" id="search" placeholder="Buscar descrição, categoria…" aria-label="Buscar transações" value="${esc(state.search)}"></label><select id="kind" aria-label="Tipo de transação">${options(
+   [
+     ["all", "Todos os tipos"],
+     ["expense", "Despesas"],
+     ["income", "Receitas"],
+     ["refund", "Estornos"],
+     ["other", "Outras movimentações"],
+   ],
+   state.kind,
+ )}</select><select id="institution" aria-label="Instituição">${options([["all", "Todas as instituições"], ...[...new Set(state.transactions.map((t) => t.instituicao))].sort().map((i) => [i, i])], state.institution)}</select><select id="group" aria-label="Categoria">${options([["all", "Todas as categorias"], ...[...new Set(viewTransactions().map((t) => t.group))].sort().map((i) => [i, i])], state.group)}</select><select id="source-filter" aria-label="Origem dos lançamentos">${options([["all", "Banco e manuais"], ["bank", "Somente banco"], ["manual", "Somente manuais"]], state.source)}</select><button class="text-button" data-action="clear-filters">Limpar filtros</button></div>`;
+}
 function filteredTransactions() {
-  return getSummary().rows.filter((t) => {
-    const query = state.search.toLocaleLowerCase("pt-BR");
-    return (
-      (state.kind === "all" || t.kind === state.kind) &&
-      (state.institution === "all" || t.instituicao === state.institution) &&
-      (state.group === "all" || t.group === state.group) &&
-      [t.description, t.group, t.instituicao, t.note].some((v) =>
-        String(v || "")
-          .toLocaleLowerCase("pt-BR")
-          .includes(query),
-      )
-    );
-  });
+  return getSummary().rows;
 }
 function transactionResults() {
   const rows = filteredTransactions(),
@@ -245,20 +295,11 @@ function transactions() {
   return (
     pageHead(
       "Cada movimento, no seu lugar.",
-      "Filtre por competência, preservando a data original de cada movimento.",
+      "Compare caixa, competência e ciclo do salário com os mesmos filtros.",
       `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
     ) +
-    `<div class="metric-strip"><div class="panel"><span>Receitas</span><strong class="positive">${amount(s.income)}</strong></div><div class="panel"><span>Despesas líquidas</span><strong>${amount(s.spending)}</strong></div><div class="panel"><span>Resultado</span><strong class="${s.balance < 0 ? "negative" : "positive"}">${amount(s.balance)}</strong></div></div>
- <section class="panel"><div class="panel-head"><div><h2>Seu extrato</h2><p>Todos os movimentos, inclusive os que não compõem o resultado.</p></div><button class="text-button" data-action="export">Exportar CSV ↓</button></div><div class="filters"><label class="search-input">${icon("search")}<input type="search" id="search" placeholder="Buscar descrição, categoria…" aria-label="Buscar transações" value="${esc(state.search)}"></label><select id="kind" aria-label="Tipo de transação">${options(
-   [
-     ["all", "Todos os tipos"],
-     ["expense", "Despesas"],
-     ["income", "Receitas"],
-     ["refund", "Estornos"],
-     ["other", "Outras movimentações"],
-   ],
-   state.kind,
- )}</select><select id="institution" aria-label="Instituição">${options([["all", "Todas as instituições"], ...[...new Set(state.transactions.map((t) => t.instituicao))].sort().map((i) => [i, i])], state.institution)}</select><select id="group" aria-label="Categoria">${options([["all", "Todas as categorias"], ...[...new Set(state.transactions.map((t) => t.group))].sort().map((i) => [i, i])], state.group)}</select></div><div id="transaction-results">${transactionResults()}</div></section>`
+    `<p class="info-note">${basisNote()}</p><div class="metric-strip"><div class="panel"><span>${state.basis === "cash" ? "Entradas de caixa" : "Receitas"}</span><strong class="positive">${amount(s.income)}</strong></div><div class="panel"><span>Despesas líquidas</span><strong>${amount(s.spending)}</strong></div><div class="panel"><span>Resultado</span><strong class="${s.balance < 0 ? "negative" : "positive"}">${amount(s.balance)}</strong></div></div>
+ <section class="panel"><div class="panel-head"><div><h2>Seu extrato</h2><p>Todos os movimentos, inclusive os que não compõem o resultado.</p></div><button class="text-button" data-action="export">Exportar CSV ↓</button></div>${filterControls()}<div id="transaction-results">${transactionResults()}</div></section>`
   );
 }
 function budget() {
@@ -277,7 +318,7 @@ function budget() {
   );
 }
 function accounts() {
-  const d = state.data.finance;
+  const d = wealth();
   return (
     pageHead(
       "Seu patrimônio, reunido.",
@@ -285,10 +326,10 @@ function accounts() {
       `<a class="button" href="/app/dashboard.html" target="_blank" rel="noopener">Relatório detalhado ↗</a>`,
       false,
     ) +
-    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, "Ativos menos dívida de cartão", "overview", true)}${kpi("Saldo em contas", d.resumo.caixa, "Última posição disponível", "accounts")}${kpi("Investimentos", d.resumo.investimentos, "Inclui posições declaradas", "leaf")}${kpi("Dívida dos cartões", d.resumo.divida, "Posição informada pelo banco", "budget")}</div>
+    `${declaredControl()}<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, "Ativos menos dívida de cartão", "overview", true)}${kpi("Saldo em contas", d.resumo.caixa, "Última posição disponível", "accounts")}${kpi("Investimentos", d.resumo.investimentos, "Inclui posições declaradas", "leaf")}${kpi("Dívida dos cartões", d.resumo.divida, "Posição informada pelo banco", "budget")}</div>
  <h2 class="section-title">Suas instituições <span class="pill">Posição de ${dateName(d.gerado_em)}</span></h2><div class="account-grid">${d.instituicoes.map((i) => `<article class="panel"><div class="panel-head"><h2>${esc(i.nome)}</h2>${icon("accounts")}</div><div class="kpi-value">${amount(i.liquido)}</div><small class="muted">Patrimônio líquido</small><div class="account-details"><div><small>Conta</small><b>${amount(i.caixa)}</b></div><div><small>Investimentos</small><b>${amount(i.investimentos)}</b></div><div><small>Cartões</small><b>${amount(i.divida)}</b></div></div><p class="info-note">Status do conector: ${esc(i.status)}</p></article>`).join("")}</div>
  <h2 class="section-title">Cartões de crédito</h2><div class="account-grid">${d.cartoes.map((c) => `<article class="account-card"><div class="account-head"><span>${esc(c.instituicao)} · ${esc(c.nome)}</span>${icon("accounts")}</div><h3>${amount(c.saldo)}</h3><div class="account-bottom"><div><small>Limite disponível</small><div>${c.disponivel == null ? "Não informado" : amount(c.disponivel)}</div></div><div><small>Vencimento informado</small><div>${dateName(c.vencimento)}</div></div></div></article>`).join("") || empty("Nenhum cartão conectado", "Os cartões serão exibidos quando estiverem no consolidado.")}</div>
- <h2 class="section-title">Investimentos <span class="pill">${d.investimentos.length} posições</span></h2><section class="panel"><div class="table-wrap"><table><thead><tr><th>Investimento</th><th>Instituição</th><th>Origem</th><th class="right">Saldo</th></tr></thead><tbody>${d.investimentos.map((v) => `<tr><td>${esc(v.nome)}<br><small class="muted">${esc(v.subtipo || v.tipo)}</small></td><td>${esc(v.instituicao)}</td><td><span class="pill ${v.manual ? "warn" : ""}">${v.manual ? "Declarado" : "Open Finance"}</span>${v.manual ? `<br><small class="muted">${dateName(v.referencia)}</small>` : ""}</td><td class="right">${amount(v.saldo)}</td></tr>`).join("")}</tbody></table></div></section><p class="info-note">Posições declaradas não são conciliadas automaticamente. A dívida é o saldo do cartão no consolidado; consulte o relatório detalhado para a composição por ciclo de fatura.</p>`
+ <button class="button" data-action="new-position">Adicionar saldo declarado</button><h2 class="section-title">Investimentos <span class="pill">${d.investimentos.length} posições</span></h2><section class="panel"><div class="table-wrap"><table><thead><tr><th>Investimento</th><th>Instituição</th><th>Origem</th><th class="right">Saldo</th></tr></thead><tbody>${d.investimentos.map((v) => `<tr><td>${esc(v.nome)}<br><small class="muted">${esc(v.subtipo || v.tipo)}</small></td><td>${esc(v.instituicao)}</td><td><span class="pill ${v.manual ? "warn" : ""}">${v.manual ? "Declarado" : "Open Finance"}</span>${v.manual ? `<br><small class="muted">${dateName(v.referencia)}</small><br><button class="text-button" data-action="edit-position" data-id="${esc(v.id)}">Editar saldo</button>` : ""}</td><td class="right">${amount(v.saldo)}</td></tr>`).join("")}</tbody></table></div></section><p class="info-note">Posições declaradas não são conciliadas automaticamente. A dívida é o saldo do cartão no consolidado; consulte o relatório detalhado para a composição por ciclo de fatura.</p>`
   );
 }
 function goals() {
@@ -318,7 +359,32 @@ function settings() {
  <section class="panel"><h2>Como os números são calculados</h2><p>Receitas e despesas seguem a competência do planejamento. A data bancária original é preservada; salários de fim de mês podem financiar o mês seguinte. Compras no cartão entram uma vez; o pagamento da fatura fica fora do resultado. Estornos reduzem despesas. Transferências próprias, aplicações e eventos patrimoniais identificados também ficam fora.</p><p>O orçamento inclui o consumo estimado de VA/VR informado no planejamento. Lançamentos manuais afetam os totais mensais, mas não atualizam o saldo recebido dos bancos.</p></section><section class="panel"><h2>Relatório para conferência</h2><p>A análise detalhada original continua disponível, com fluxo mensal, parcelas, projeções e reconciliação de caixa. Ela mantém as premissas do gerador original e não incorpora o planejamento salvo neste app.</p><a class="button" href="/app/dashboard.html" target="_blank" rel="noopener">Abrir análise detalhada ↗</a></section></div>`
   );
 }
-const renderers = { overview, transactions, budget, accounts, goals, settings };
+function kaleuPage() {
+  return pageHead("Converse com o Kaleu.", "O mesmo planejamento no navegador e no Telegram.", "", false) +
+    `<section class="panel kaleu-panel"><p id="kaleu-status" class="info-note">Conectando ao Kaleu…</p><div id="kaleu-messages" class="kaleu-messages" aria-live="polite"></div><form id="kaleu-form"><label for="kaleu-message">Sua mensagem</label><textarea id="kaleu-message" name="message" required maxlength="6000" rows="3" placeholder="Ex.: registre R$ 80 de mercado hoje, ou explique meu ciclo deste mês."></textarea><button class="button primary" type="submit">Enviar para o Kaleu</button><p class="info-note">Ele pode consultar e alterar o planejamento conforme seus pedidos. Não realiza pagamentos bancários. As alterações ficam registradas abaixo.</p></form></section><section class="panel" style="margin-top:20px"><h2>Histórico de alterações</h2><div id="kaleu-audit"></div></section>`;
+}
+async function loadKaleu() {
+  if (state.page !== "kaleu" || !state.data) return;
+  try {
+    const [result, audit] = await Promise.all([api("kaleu/messages"), api("audit")]);
+    const completed = result.messages.some(m => ["done", "failed"].includes(m.status) && state.kaleuMessages.some(old => old.id === m.id && ["queued", "running"].includes(old.status)));
+    state.kaleuMessages = result.messages;
+    const container = document.querySelector("#kaleu-messages");
+    if (!container) return;
+    document.querySelector("#kaleu-status").textContent = result.available ? "Kaleu conectado" : "Kaleu sem conexão no momento. Seu pedido ficará na fila.";
+    container.innerHTML = result.messages.map(m => `<article class="chat-pair"><div class="chat-user"><b>Você</b><p>${esc(m.message)}</p></div><div class="chat-agent"><b>Kaleu</b><p>${esc(m.reply || (m.status === "running" ? "Analisando seu pedido…" : "Aguardando atendimento…"))}</p></div></article>`).join("") || '<p class="info-note">Pergunte sobre o mês, confira saldos ou peça um ajuste no planejamento.</p>';
+    document.querySelector("#kaleu-audit").innerHTML = audit.entries.slice(0,20).map(e => `<details class="audit-entry"><summary>${esc(new Date(e.at * 1000).toLocaleString("pt-BR"))} · ${esc(e.actor)} · ${esc(({position:"Saldo declarado",transaction:"Lançamento",override:"Classificação",goal:"Meta",budget:"Orçamento"})[e.kind] || e.kind)}</summary><pre>${esc(JSON.stringify({antes: e.before, depois: e.after},null,2))}</pre></details>`).join("") || '<p class="info-note">Nenhuma alteração registrada ainda.</p>';
+    if (completed) {
+      const fresh = await api("data");
+      state.data = fresh;
+    }
+  } catch (error) {
+    const status = document.querySelector("#kaleu-status");
+    if (status) status.textContent = error.message;
+  }
+}
+
+const renderers = { overview, transactions, budget, accounts, goals, settings, kaleu: kaleuPage };
 function render() {
   state.page =
     location.hash.slice(1) in pages ? location.hash.slice(1) : "overview";
@@ -344,8 +410,37 @@ function render() {
   document.querySelector("#source").textContent =
     `Dados de ${dateName(state.data.finance.gerado_em)}`;
   bindFilters();
+  if (state.page === "kaleu") {
+    document.querySelector("#kaleu-form").onsubmit = async event => {
+      event.preventDefault();
+      const form = event.target, button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        await api("kaleu/messages", "POST", {message: new FormData(form).get("message")});
+        form.reset();
+        await loadKaleu();
+      } catch (error) { toast(error.message); }
+      finally { button.disabled = false; }
+    };
+    loadKaleu();
+  }
 }
 function bindFilters() {
+  document.querySelector("#include-declared")?.addEventListener("change", event => {
+    state.includeDeclared = event.target.checked;
+    render();
+  });
+  document.querySelector("#basis")?.addEventListener("change", (event) => {
+    state.basis = event.target.value;
+    state.group = "all";
+    state.pagination = 1;
+    render();
+  });
+  document.querySelector("#source-filter")?.addEventListener("change", (event) => {
+    state.source = event.target.value;
+    state.pagination = 1;
+    render();
+  });
   document.querySelector("#month")?.addEventListener("change", (event) => {
     state.month = event.target.value;
     state.pagination = 1;
@@ -354,15 +449,18 @@ function bindFilters() {
   document.querySelector("#search")?.addEventListener("input", (event) => {
     state.search = event.target.value;
     state.pagination = 1;
-    document.querySelector("#transaction-results").innerHTML =
-      transactionResults();
+    const input = event.target;
+    const position = input.selectionStart;
+    render();
+    const replacement = document.querySelector("#search");
+    replacement?.focus();
+    replacement?.setSelectionRange(position, position);
   });
   for (const field of ["kind", "institution", "group"])
     document.querySelector("#" + field)?.addEventListener("change", (event) => {
       state[field] = event.target.value;
       state.pagination = 1;
-      document.querySelector("#transaction-results").innerHTML =
-        transactionResults();
+      render();
     });
 }
 async function load() {
@@ -406,7 +504,7 @@ async function load() {
         };
         t.adjusted = true;
       }
-      return { ...t, competence: competenceMonth(t, data.budget) };
+      return t;
     })
     .sort((a, b) => b.date.localeCompare(a.date));
   if (!state.month) state.month = data.finance.gerado_em.slice(0, 7);
@@ -559,17 +657,26 @@ function classificationForm(id) {
         ["other", "Fora do resultado"],
       ],
       t.kind,
-    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(t.competence)}" required></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
+    )}</select></label><label>Competência<input name="competence" type="month" value="${esc(competenceMonth(t, state.data.budget))}" required></label><label>Ciclo de pagamento<input name="cycle" type="month" value="${esc(cycleMonth(t, state.data.budget))}"></label><label class="full">Origem da renda<select name="is_salary"><option value="false">Outra movimentação</option><option value="true" ${t.is_salary || t.metodo === "Salário" ? "selected" : ""}>Salário / portabilidade de salário</option></select></label></div><p class="info-note">Se esta entrada for portabilidade de salário, marque como receita. Transferências entre suas próprias contas devem continuar fora do resultado.</p>${t.adjusted ? `<button type="button" class="text-button" data-action="reset-classification" data-id="${esc(id)}">Restaurar classificação original</button>` : ""}${formFooter("Salvar ajuste")}</form>`,
   );
   bindForm(async (f) =>
     api("transactions/" + id + "/classification", "PUT", {
       kind: f.get("kind"),
       competence: f.get("competence"),
+      cycle: f.get("cycle") || null,
       is_salary: f.get("is_salary") === "true",
     }),
   );
 }
 
+function positionForm(id) {
+  const v = (state.data.positions || []).find(v => v.id === id);
+  openModal(v ? "Editar saldo declarado" : "Adicionar saldo declarado", "Posição patrimonial informada por você; não cria receita nem despesa.",
+    `<form><div class="form-grid"><label>Nome<input name="name" required maxlength="120" value="${esc(v?.name || "")}"></label><label>Instituição<input name="institution" required maxlength="80" value="${esc(v?.institution || "")}"></label><label>Saldo (R$)<input name="balance" type="number" min="0" step="0.01" required value="${v?.balance ?? ""}"></label><label>Data de referência<input name="reference" type="date" required value="${v?.reference || new Date().toISOString().slice(0,10)}"></label><label>Classe<input name="asset_class" required maxlength="80" value="${esc(v?.asset_class || "Declarado")}"></label></div>${formFooter("Salvar saldo")}</form>`);
+  bindForm(f => api("positions" + (id ? "/" + id : ""), id ? "PUT" : "POST", {
+    name: f.get("name"), institution: f.get("institution"), balance: Number(f.get("balance")), reference: f.get("reference"), asset_class: f.get("asset_class")
+  }));
+}
 function transactionForm() {
   const groups = [
     ...new Set(state.data.budget.lines.flatMap((l) => l.grupos)),
@@ -684,6 +791,17 @@ document.addEventListener("click", async (event) => {
     return;
   }
   try {
+    if (action === "clear-filters") {
+      Object.assign(state, {search: "", kind: "all", institution: "all", group: "all", source: "all", pagination: 1});
+      render();
+    }
+    if (action === "category-filter") {
+      state.group = button.dataset.group;
+      state.kind = "all";
+      state.pagination = 1;
+      location.hash = "transactions";
+      render();
+    }
     if (action === "forgot-password") {
       history.replaceState(null, "", location.pathname);
       renderForgot();
@@ -694,6 +812,8 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "change-password") renderPasswordChange();
     if (action === "back-to-app") await load();
+    if (action === "new-position") positionForm();
+    if (action === "edit-position") positionForm(button.dataset.id);
     if (action === "new-transaction") transactionForm();
     if (action === "classify-transaction")
       classificationForm(button.dataset.id);
@@ -715,8 +835,7 @@ document.addEventListener("click", async (event) => {
       confirmDelete("transactions", button.dataset.id);
     if (action === "previous" || action === "next") {
       state.pagination += action === "next" ? 1 : -1;
-      document.querySelector("#transaction-results").innerHTML =
-        transactionResults();
+      render();
     }
     if (action === "export") {
       const rows = filteredTransactions();
@@ -779,9 +898,17 @@ window.addEventListener("hashchange", () => {
     load();
     return;
   }
-  render();
+  if (state.data) load().catch(error => toast(error.message));
+  else render();
   window.scrollTo({ top: 0 });
 });
 load().catch((error) => {
   content.innerHTML = `<div class="loading-state">${icon("leaf")}<h1>Não foi possível carregar os dados.</h1><p>${esc(error.message)}</p><button class="button primary" data-action="retry">Tentar novamente</button></div>`;
 });
+
+setInterval(() => {
+  if (document.visibilityState === "visible" && state.page === "kaleu") loadKaleu();
+}, 7000);
+setInterval(() => {
+  if (state.data && state.page !== "kaleu" && document.visibilityState === "visible" && !modal.open && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) load().catch(() => {});
+}, 60000);

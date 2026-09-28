@@ -8,7 +8,7 @@ import sys
 from functools import lru_cache
 
 from .config import FINANCE, FINANCE_CONFIG, REPORTS
-from . import store
+from . import store, positions
 
 sys.path.insert(0, str(FINANCE))
 from payload_consolidado import build
@@ -52,9 +52,10 @@ def data():
         raise FileNotFoundError('Nenhum consolidado disponível. Adicione um arquivo em data/reports.')
     deps = [path, *(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json'])]
     payload = snapshot(path, tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in deps))
+    payload, declared = positions.apply(payload)
     budgets = store.all_of('budget')
     return {'source': path.name, 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
-            'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
+            'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
 
 
 def classifier_module():

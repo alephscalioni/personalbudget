@@ -15,11 +15,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResp
 from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT, FRONTEND, GENERATOR
-from .models import Budget, Goal, Transaction, TransactionOverride
-from . import auth, service, store
+from .models import Budget, Goal, Transaction, TransactionOverride, Position
+from . import auth, service, store, kaleu
 
 app = FastAPI(title='Personal Budget', version='2.0.0')
 app.include_router(auth.router)
+app.include_router(kaleu.router)
 refresh_lock = threading.Lock()
 
 
@@ -42,13 +43,19 @@ async def local_privacy(request: Request, call_next):
         return JSONResponse({'detail': 'Host não autorizado.'}, status_code=400)
     path = posixpath.normpath(request.url.path)
     protected = (path.startswith('/api/') and path not in ('/api/health', '/api/session', '/api/password/change', '/api/password/forgot', '/api/password/reset')) or path in ('/app/dashboard.html', '/app/js/classifier.js')
-    if protected and not auth.authenticated(request):
+    if protected and not (auth.authenticated(request) or kaleu.allowed(request)):
         if path == '/app/dashboard.html':
             response = RedirectResponse('/')
         else:
             response = JSONResponse({'detail': 'Entre para acessar suas finanças.'}, status_code=401)
     else:
-        response = await call_next(request)
+        user = auth.current_user(request)
+        actor = 'kaleu' if kaleu.is_agent(request) else user['username'] if user else 'local'
+        context = store.actor.set(actor)
+        try:
+            response = await call_next(request)
+        finally:
+            store.actor.reset(context)
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -151,11 +158,36 @@ def reset_classification(identifier: str):
     return Response(status_code=204)
 
 
+@app.post('/api/positions', status_code=201)
+def create_position(body: Position):
+    service.data()  # Initialize inherited declarations before the first edit.
+    return store.save('position', body.model_dump(mode='json'))
+
+
+@app.put('/api/positions/{identifier}')
+def update_position(identifier: str, body: Position):
+    if not store.get('position', identifier):
+        raise HTTPException(404, 'Posição não encontrada.')
+    return store.save('position', body.model_dump(mode='json'), identifier)
+
+
+@app.delete('/api/positions/{identifier}', status_code=204)
+def delete_position(identifier: str):
+    if not store.remove('position', identifier):
+        raise HTTPException(404, 'Posição não encontrada.')
+    return Response(status_code=204)
+
+
+@app.get('/api/audit')
+def audit_history():
+    return {'entries': store.all_of('audit')[-100:][::-1]}
+
+
 @app.get('/api/backup')
 def backup():
     return JSONResponse({'version': 1, 'exported_at': datetime.now(timezone.utc).isoformat(),
         'budget': store.all_of('budget') or [service.default_budget()],
-        'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override')},
+        'positions': store.all_of('position'), 'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override')},
         headers={'Content-Disposition': 'attachment; filename="personal-budget-backup.json"'})
 
 

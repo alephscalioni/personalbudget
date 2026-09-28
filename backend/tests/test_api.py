@@ -173,6 +173,53 @@ class ApiTests(unittest.TestCase):
         self.assertIn('export function classifyPayload', response.text)
         self.assertIn('text/javascript', response.headers['content-type'])
 
+    def test_declared_positions_persist_without_changing_income(self):
+        baseline = self.client.get('/api/data').json()
+        position = {'name':'Reserva', 'institution':'Banco teste', 'balance':123.45, 'reference':'2026-09-27', 'asset_class':'CDB'}
+        r = self.client.post('/api/positions', json=position)
+        self.assertEqual(r.status_code, 201)
+        identifier = r.json()['id']
+        data = self.client.get('/api/data').json()
+        self.assertEqual(data['finance']['resumo']['liquido'], baseline['finance']['resumo']['liquido'] + 123.45)
+        self.assertEqual(data['finance']['lancamentos'], baseline['finance']['lancamentos'])
+        self.client.put('/api/positions/' + identifier, json={**position,'balance':200})
+        self.assertEqual(self.client.get('/api/data').json()['finance']['manual_total'], 200)
+        self.client.delete('/api/positions/' + identifier)
+        self.assertEqual(self.client.get('/api/data').json()['positions'], [])
+        audit = self.client.get('/api/audit').json()['entries']
+        self.assertEqual(len(audit), 3)
+        self.assertEqual(audit[0]['before']['balance'], 200)
+        self.assertIsNone(audit[0]['after'])
+
+    def test_kaleu_queue_lease_cannot_be_replayed(self):
+        headers = {'Authorization':'Bearer test-agent-token'}
+        with patch.dict('os.environ', {'PERSONALBUDGET_KALEU_TOKEN':'test-agent-token'}):
+            job = self.client.post('/api/kaleu/messages', json={'message':'Consulte meu orçamento'}).json()
+            self.assertEqual(self.client.post('/api/kaleu/claim').status_code, 403)
+            claimed = self.client.post('/api/kaleu/claim', headers=headers).json()['job']
+            self.assertEqual(claimed['id'], job['id'])
+            self.assertIsNone(self.client.post('/api/kaleu/claim', headers=headers).json()['job'])
+            visible = self.client.get('/api/kaleu/messages').json()
+            self.assertNotIn('lease', str(visible))
+            self.assertTrue(visible['available'])
+            url = '/api/kaleu/jobs/' + job['id'] + '/complete'
+            body = {'lease':claimed['lease'],'reply':'Consulta concluída'}
+            self.assertEqual(self.client.post(url, headers=headers, json={**body,'lease':'x'*32}).status_code, 409)
+            self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 200)
+            self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 409)
+
+    def test_kaleu_token_has_only_finance_permissions_and_audit(self):
+        headers = {'Authorization':'Bearer test-agent-token'}
+        with patch.dict('os.environ', {'PERSONALBUDGET_AUTH_REQUIRED':'1', 'PERSONALBUDGET_KALEU_TOKEN':'test-agent-token', 'PERSONALBUDGET_PASSWORD_HASH':auth.password_hash('a-unique-long-password'), 'PERSONALBUDGET_SESSION_SECRET':'test-secret'}):
+            self.assertEqual(self.client.get('/api/data', headers=headers).status_code, 200)
+            self.assertFalse(self.client.get('/api/session', headers=headers).json()['authenticated'])
+            self.assertEqual(self.client.get('/api/kaleu/messages', headers=headers).status_code, 401)
+            self.assertEqual(self.client.get('/app/dashboard.html', headers=headers, follow_redirects=False).status_code, 307)
+            self.assertEqual(self.client.post('/api/refresh', headers=headers).status_code, 401)
+            self.assertEqual(self.client.post('/api/goals', headers=headers, json={'name':'Meta','target':100,'saved':0}).status_code, 201)
+            self.assertEqual(self.client.get('/api/audit', headers=headers).json()['entries'][0]['actor'], 'kaleu')
+            self.assertEqual(self.client.get('/api/data', headers={'Authorization':'Bearer wrong'}).status_code, 401)
+
 
 if __name__ == '__main__':
     unittest.main()

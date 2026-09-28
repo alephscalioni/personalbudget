@@ -106,3 +106,17 @@ A recuperação usa Google SMTP (`smtp.gmail.com`, TLS, porta 587), com uma senh
 O backup JSON do planejamento não inclui contas, hashes de senha ou tokens de recuperação. Para preservar também os acessos, faça backup do volume persistente, protegido e fora do Git.
 
 Referência SMTP: https://support.google.com/a/answer/176600
+
+### Ciclo do salário, caixa e competência
+
+A visão padrão é o ciclo do salário: recebimento no fim do mês financia o próximo mês; recebimento no dia 01 financia esse mesmo mês. O cartão usa o mês da fatura, quando disponível. Caixa considera movimentações bancárias pela data, incluindo liquidação de fatura, investimentos e transferências. A visão de competência usa o mês informado; sem ajuste, usa a data do lançamento e atribui salário do dia 01 ao mês anterior. São aproximações explícitas e editáveis; não representam conciliação automática de todas as obrigações.
+
+Filtros de instituição, categoria, origem e tipo afetam totais, gráfico e exportação. A pizza abre os lançamentos de cada categoria. Saldos declarados são editáveis e persistidos separadamente; podem ser excluídos da visualização patrimonial. VA/VR continua como estimativa de planejamento, identificada na tela.
+
+### Kaleu no navegador e Telegram
+
+O Kaleu existente em `codex-bots` usa `scripts/kaleu-client.py` para ler e alterar o mesmo planejamento pela API autenticada. A credencial financeira não concede acesso às senhas dos usuários, relatórios privados por sessão, ou mensagens de outros usuários. Alterações de orçamento, metas, lançamentos, classificações e saldos declarados registram antes/depois e autor em `/api/audit`.
+
+O navegador usa uma fila persistente; `scripts/kaleu-worker.py` consulta a fila de saída no servidor do usuário e executa Codex com a autenticação já existente, em um workspace financeiro separado. Histórico de chat é separado por usuário. Telegram e navegador compartilham dados financeiros, não o histórico privado de conversas. Pedidos interrompidos não são reexecutados automaticamente, pois podem já ter feito alterações. O worker depende do servidor pessoal ligado e conectado. Nenhum desses endpoints executa pagamentos bancários.
+
+Configuração privada: `~/.config/personalbudget/kaleu.json`; variável cloud `PERSONALBUDGET_KALEU_TOKEN`. `scripts/configure-kaleu.py` provisiona os caminhos deste ambiente e o serviço `kaleu-personalbudget.service`. O protocolo e os campos disponíveis estão em `deployment/kaleu/AGENTS.md`.

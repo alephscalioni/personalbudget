@@ -5,6 +5,8 @@ import vm from "node:vm";
 import {
   monthSummary,
   competenceMonth,
+  cycleMonth,
+  transactionsForBasis,
   budgetSummary,
   csvCell,
   monthSequence,
@@ -123,31 +125,47 @@ test("calendar rollover, cent arithmetic and safe CSV export", () => {
   assert.equal(csvCell('Mercado; "Centro"'), '"Mercado; ""Centro"""');
 });
 
-test("salary competence rolls over without modifying posting date", () => {
+test("salary cycle rolls over without modifying posting date", () => {
   const salary = {
     kind: "income",
     metodo: "Salário",
     date: "2026-08-31",
     amount: 1000,
   };
-  assert.equal(competenceMonth(salary), "2026-09");
+  assert.equal(cycleMonth(salary), "2026-09");
   assert.equal(salary.date, "2026-08-31");
-  assert.equal(competenceMonth({ ...salary, date: "2026-12-31" }), "2027-01");
-  assert.equal(competenceMonth({ ...salary, date: "2026-08-14" }), "2026-08");
+  assert.equal(cycleMonth({ ...salary, date: "2026-12-31" }), "2027-01");
+  assert.equal(cycleMonth({ ...salary, date: "2026-08-14" }), "2026-08");
   assert.equal(
-    competenceMonth(salary, { salary_next_month: false }),
+    cycleMonth(salary, { salary_next_month: false }),
     "2026-08",
   );
   assert.equal(
-    competenceMonth({ ...salary, kind: "other", externa: true }),
+    cycleMonth({ ...salary, kind: "other", externa: true }),
     "2026-08",
   );
-  assert.equal(competenceMonth({ ...salary, metodo: "PIX" }), "2026-08");
+  assert.equal(cycleMonth({ ...salary, metodo: "PIX" }), "2026-08");
   assert.equal(
-    competenceMonth({ ...salary, competence: "2026-10" }),
+    cycleMonth({ ...salary, competence: "2026-10" }),
     "2026-10",
   );
-  const classified = { ...salary, competence: competenceMonth(salary) };
+  const classified = { ...salary, competence: cycleMonth(salary) };
   assert.equal(monthSummary([classified], "2026-08").income, 0);
   assert.equal(monthSummary([classified], "2026-09").income, 1000);
+});
+
+
+test("cash, earned month and salary cycle remain distinct across year boundaries", () => {
+  const december = {kind: "income", is_salary: true, date: "2026-12-31", amount: 1000, valor: 1000};
+  const january = {...december, date: "2027-01-01"};
+  assert.equal(competenceMonth(december), "2026-12");
+  assert.equal(competenceMonth(january), "2026-12");
+  assert.equal(cycleMonth(december), "2027-01");
+  assert.equal(cycleMonth(january), "2027-01");
+  const purchase = {kind: "expense", date: "2026-12-20", fatura: "2027-01-05", conta_tipo: "CREDIT", amount: 300, valor: 300, group: "Compras"};
+  const payment = {kind: "other", date: "2027-01-05", natureza: "fatura", amount: 300, valor: -300};
+  assert.equal(monthSummary(transactionsForBasis([purchase, payment], "cycle"), "2027-01").spending, 300);
+  assert.equal(monthSummary(transactionsForBasis([purchase, payment], "cash"), "2027-01").spending, 300);
+  assert.equal(monthSummary(transactionsForBasis([purchase, payment], "cash"), "2026-12").spending, 0);
+  assert.equal(monthSummary(transactionsForBasis([purchase, payment], "competence"), "2026-12").spending, 300);
 });

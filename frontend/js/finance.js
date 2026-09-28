@@ -50,8 +50,10 @@ export function csvCell(value) {
 }
 
 // Posting date remains unchanged; only the planning month moves.
-export function competenceMonth(transaction, budget = {}) {
+export function cycleMonth(transaction, budget = {}) {
+  if (transaction.cycle) return transaction.cycle;
   if (transaction.competence) return transaction.competence;
+  if (transaction.conta_tipo === "CREDIT" && transaction.fatura) return transaction.fatura.slice(0, 7);
   const month = transaction.date.slice(0, 7);
   const salary =
     transaction.kind === "income" &&
@@ -64,4 +66,30 @@ export function competenceMonth(transaction, budget = {}) {
   if (Number(transaction.date.slice(8, 10)) < cutoff) return month;
   const [year, m] = month.split("-").map(Number);
   return `${m === 12 ? year + 1 : year}-${String(m === 12 ? 1 : m + 1).padStart(2, "0")}`;
+}
+
+export function competenceMonth(transaction, budget = {}) {
+  if (transaction.competence) return transaction.competence;
+  const month = transaction.date.slice(0, 7);
+  const salary = transaction.kind === "income" && (transaction.is_salary || transaction.metodo === "Salário" || ["Salary", "Salaries"].includes(transaction.categoria));
+  if (salary && Number(transaction.date.slice(8, 10)) === 1 && budget.salary_next_month !== false) {
+    return monthSequence(month, 2)[0];
+  }
+  return month;
+}
+
+// Cash shows actual bank movements; card purchases affect cash when the bill is paid.
+export function transactionsForBasis(transactions, basis = "cycle", budget = {}) {
+  return transactions.filter(t => basis !== "cash" || t.conta_tipo !== "CREDIT").map((t) => {
+    if (basis !== "cash") return { ...t, competence: basis === "cycle" ? cycleMonth(t, budget) : competenceMonth(t, budget) };
+    let kind = t.kind, group = t.group;
+    if (t.conta_tipo === "CREDIT") kind = "other";
+    else if (!t.manual) {
+      kind = t.valor < 0 ? "expense" : t.valor > 0 ? "income" : "other";
+      if (t.natureza === "fatura") group = "Pagamento de fatura";
+      else if (t.natureza === "investimento") group = "Aplicações e resgates";
+      else if (t.natureza === "interna" || t.externa) group = "Transferências próprias";
+    }
+    return { ...t, kind, group, competence: t.date.slice(0, 7) };
+  });
 }

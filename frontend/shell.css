@@ -1695,3 +1695,25 @@ body.private .donut svg {
     padding: 28px 24px;
   }
 }
+
+.filters { flex-wrap: wrap; margin-bottom: 18px; }
+.category-button { width: 100%; background: none; border: 0; text-align: left; color: inherit; cursor: pointer; font: inherit; padding: 10px 0; }
+.category-button:hover { background: var(--bg); }
+.category-button small { color: var(--muted); }
+.category-list { max-height: 340px; overflow-y: auto; }
+
+.declared-toggle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0; color: var(--muted); font-size: 12px; }
+.declared-toggle input { width: auto; }
+.cycle-note { margin: 18px 0; }
+.cycle-note p { font-size: 13px; color: var(--muted); line-height: 1.7; }
+
+.kaleu-panel { max-width: 960px; margin: auto; }
+.kaleu-messages { max-height: 55vh; overflow-y: auto; margin: 16px 0; }
+.chat-pair { margin-bottom: 22px; }
+.chat-user, .chat-agent { padding: 16px; border-radius: 12px; margin: 8px 0; }
+.chat-user { background: var(--accent-soft); margin-left: 10%; }
+.chat-agent { background: var(--bg); margin-right: 5%; }
+.chat-pair p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; }
+#kaleu-form textarea { display: block; width: 100%; margin: 10px 0; }
+.audit-entry { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.audit-entry pre { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
