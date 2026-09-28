@@ -39,6 +39,26 @@ def default_budget():
             'monthly_saving': b['meta_poupanca'], 'benefits_spending': c.get('va_alicia', 0) + c.get('vr_aleph', 0)}
 
 
+def matches_salary_rule(transaction, rule):
+    if rule.get('person') not in ('aleph', 'bianca'):
+        return False
+    # External own-account credits require explicit confirmation of portability.
+    if transaction.get('externa') and not rule.get('confirmed_portability'):
+        return False
+    root = rule.get('payer_root', '')
+    if root:
+        return (len(root) == 8 and root.isdigit()
+                and re.sub(r'\D', '', transaction.get('desc', '')).startswith(root))
+    # Never infer ownership from an amount, date, or a generic transfer method.
+    if not rule.get('institution') or rule.get('institution') != transaction.get('instituicao'):
+        return False
+    if not rule.get('method') or rule['method'] != transaction.get('metodo'):
+        return False
+    description = rule.get('description')
+    return (description == transaction.get('desc') if description
+            else rule['method'] == 'Salário')
+
+
 @lru_cache(maxsize=2)
 def snapshot(path, fingerprints):
     payload = build(json.loads(path.read_text(encoding='utf-8')))
@@ -48,16 +68,14 @@ def snapshot(path, fingerprints):
         digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()[:32]
         seen[digest] += 1
         t['id'] = f'bank-{digest}-{seen[digest]}'
-    # Confirmed payer rules only annotate an existing bank credit; no income is added.
+    # Private payer rules identify existing credits without changing bank records.
     rules_path = FINANCE_CONFIG / 'salary-rules.json'
     rules = json.loads(rules_path.read_text()).get('rules', []) if rules_path.exists() else []
     for t in payload['lancamentos']:
-        if t.get('conta_tipo') == 'CREDIT' or t.get('valor', 0) <= 0 or t.get('natureza') != 'entrada' or t.get('externa'):
+        if t.get('conta_tipo') == 'CREDIT' or t.get('valor', 0) <= 0 or t.get('natureza') != 'entrada':
             continue
-        digits = re.sub(r'\D', '', t.get('desc', ''))
         for rule in rules:
-            root = rule.get('payer_root', '')
-            if len(root) == 8 and root.isdigit() and digits.startswith(root) and rule.get('person') in ('aleph','bianca'):
+            if matches_salary_rule(t, rule):
                 t['salary_person'] = rule['person']
                 t['is_salary'] = True
                 break
@@ -87,14 +105,15 @@ def classifier_module():
 const expenses = new Set(gastos), refunds = new Set(estornos);
 return D.lancamentos.map((t, index) => {
   let kind = 'other';
-  if (expenses.has(t)) kind = 'expense';
+  if (t.is_salary && t.salary_person && t.conta_tipo !== 'CREDIT' && t.valor > 0 && t.natureza === 'entrada') kind = 'income';
+  else if (expenses.has(t)) kind = 'expense';
   else if (refunds.has(t)) kind = 'refund';
   else if (t.conta_tipo !== 'CREDIT' && !ehMovimentacaoPropria(t) && !ehEventoPatrimonial(t)) {
     if (t.natureza === 'consumo') kind = 'expense';
     if (t.natureza === 'entrada') kind = 'income';
   }
   return {...t, id: t.id || 'bank-' + index, description: limpaDesc(t.desc),
-    group: grupoDe(t), category: catDe(t), kind, amount: Math.abs(t.valor), date: t.data.slice(0,10)};
+    group: t.is_salary && kind === 'income' ? 'Salário' : grupoDe(t), category: t.is_salary && kind === 'income' ? 'Salário' : catDe(t), kind, amount: Math.abs(t.valor), date: t.data.slice(0,10)};
 });
 }
 '''

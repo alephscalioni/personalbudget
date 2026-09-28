@@ -1725,3 +1725,29 @@ body.private .donut svg {
 .salary-plan p { margin: 9px 0; }
 .salary-plan small { color: var(--muted); }
 .salary-candidate { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; font-size: 12px; border-bottom: 1px solid var(--line); }
+
+/* Management dashboard: numbers first, details in the dedicated pages. */
+.financial-dashboard .eyebrow, .financial-dashboard .page-head > div > p { display: none; }
+.financial-dashboard .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.financial-dashboard .page-head { margin-bottom: 18px; }
+.dashboard-filters { margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.dashboard-filters summary { cursor: pointer; padding: 0 0 14px; font-size: 12px; color: var(--muted); }
+.dashboard-filters summary span { float: right; }
+.dashboard-filters .filters { margin-top: 10px; }
+.salary-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
+.salary-card { display: flex; align-items: center; gap: 14px; padding: 18px 22px; background: white; border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.salary-avatar { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; background: #edf1f7; color: #435571; border-radius: 50%; font-size: 16px; }
+.salary-card > div:nth-child(2) { display: grid; gap: 5px; min-width: 0; }
+.salary-card span, .salary-card small { color: var(--muted); font-size: 11px; }
+.salary-card strong { font-size: 20px; font-weight: 500; }
+.salary-card > a { margin-left: auto; }
+.budget-balance { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 20px; font-size: 12px; color: var(--muted); }
+.budget-balance strong { font-size: 22px; font-weight: 500; }
+.financial-dashboard .category-list { max-height: 190px; }
+@media (max-width: 1100px) { .financial-dashboard .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .salary-cards { grid-template-columns: 1fr; gap: 10px; }
+  .salary-card { padding: 14px; }
+  .dashboard-filters summary span { float: none; display: block; margin-top: 8px; }
+  .financial-dashboard .kpi-value { font-size: 21px; }
+}

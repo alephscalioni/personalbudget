@@ -55,6 +55,7 @@ const state = {
   basis: "cycle",
   source: "all",
   includeDeclared: true,
+  filtersOpen: false,
   kaleuMessages: [],
 };
 const content = document.querySelector("#content");
@@ -240,38 +241,27 @@ function salariesPanel() {
   const current = salaryBreakdown(state.transactions, state.month, state.data.budget);
   return `<section class="panel salary-panel"><div class="panel-head"><div><h2>Salários mês a mês</h2><p>Ciclo do salário · valores por pessoa, sem repetir receitas do extrato</p></div></div><div class="salary-plan">${plan.map(p => `<div><b>${esc(p.name)} · ${esc(p.regime)}</b><p>Líquido previsto: ${amount(p.net)}</p>${p.gross == null ? "" : `<small>Bruto de referência: ${amount(p.gross)}</small>`}</div>`).join("")}</div><p class="info-note">Estes são os valores atuais do planejamento, não recebimentos históricos confirmados. Os totais abaixo usam salários atribuídos a cada pessoa. “Não identificado” não significa que não houve pagamento.</p><div class="table-wrap"><table><thead><tr><th>Ciclo</th><th>Aleph · identificado</th><th>Bianca · identificado</th><th>Salários sem titular</th></tr></thead><tbody>${rows.map(month => {const s = salaryBreakdown(state.transactions, month, state.data.budget);return `<tr><td>${esc(monthName(month))}</td><td>${s.received.aleph ? amount(s.received.aleph) : '<span class="muted">Não identificado</span>'}</td><td>${s.received.bianca ? amount(s.received.bianca) : '<span class="muted">Não identificado</span>'}</td><td>${s.unassigned ? amount(s.unassigned) : '—'}</td></tr>`;}).join("")}</tbody></table></div>${current.candidates.length ? `<details><summary>Repasses da Bianca no mês: ${current.candidates.length} para conferir</summary><p class="info-note">PIX da Bianca pode ser salário, transferência ou reembolso. Confirme a finalidade antes de marcar como salário.</p>${current.candidates.map(t => `<div class="salary-candidate"><span>${dateName(t.date)} · ${esc(t.description)} · ${amount(t.amount)}</span><button class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Identificar</button></div>`).join("")}</details>` : ""}<p class="info-note">Para atribuir um recebimento bancário, abra Transações → Ajustar → Titular do salário. Se o recebimento não está no extrato, registre um lançamento manual como salário e informe o titular.</p></section>`;
 }
+function salaryCards() {
+  const rows = getSummary().rows;
+  return `<div class="salary-cards">${(state.data.salary_plan || []).map(p => {
+    const received = sum(rows.filter(t => t.kind === "income" && t.salary_person === p.person).map(t => t.amount));
+    return `<article class="salary-card"><div class="salary-avatar" aria-hidden="true">${esc(p.name[0])}</div><div><span>Salário · ${esc(p.name)}</span><strong>${received ? amount(received) : 'Não identificado'}</strong><small>Previsto ${amount(p.net)}</small></div><a class="text-button" href="#budget" aria-label="Histórico de salários de ${esc(p.name)}">↗</a></article>`;
+  }).join("")}</div>`;
+}
 function overview() {
-  const d = wealth(),
-    s = getSummary(),
-    b = getBudget();
-  const latest = state.data.finance.gerado_em.slice(0, 7) === state.month;
+  const d = wealth(), s = getSummary(), b = getBudget();
   const savingRate = s.income ? Math.round((s.balance / s.income) * 100) : null;
-  const over = b.lines.filter((l) => l.spent > l.teto).length;
-  const recent = s.rows.filter((t) => t.kind !== "other").slice(0, 5);
-  return (
-    pageHead(
-      "Seu dinheiro, em perspectiva.",
-      "Tudo o que você precisa para acompanhar sua vida financeira.",
-      `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`,
-    ) + `<p class="info-note">${basisNote()}</p>${declaredControl()}${filterControls()}${cycleDetails()}` +
-    `<div class="kpis">${kpi("Patrimônio líquido", d.resumo.liquido, `<span class="dot"></span> Posição de ${dateName(d.gerado_em)}`, "overview", true)}${kpi(state.basis === "cash" ? "Entradas de caixa" : "Receitas do mês", s.income, "Conforme visão e filtros selecionados", "down", false, "positive")}${kpi(state.basis === "cash" ? "Saídas de caixa" : "Despesas do mês", s.spending, "Conforme visão e filtros selecionados", "arrow")}${kpi("Resultado do mês", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas no período`, "leaf", false, s.balance < 0 ? "negative" : "")}</div>
- ${salariesPanel()}<div class="grid-main"><section class="panel"><div class="panel-head"><div><h2>Entradas e saídas</h2><p>Seu movimento ao longo dos meses</p></div><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>${latest ? "Mês atual em andamento" : "Mês selecionado"} · resultado por competência</span><a class="text-button" href="#transactions">Ver transações ↗</a></div></section>
- <section class="panel"><div class="panel-head"><div><h2>Para onde vai seu dinheiro</h2><p>Distribuição dos gastos do mês</p></div><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
- <div class="insight">${icon("leaf")}<div><b>${b.remaining >= 0 ? "Seu planejamento tem espaço para respirar." : "Hora de dar atenção ao orçamento."}</b><p>${b.remaining >= 0 ? `Restam ${amount(b.remaining)} no limite mensal.` : `O consumo supera o limite em ${amount(-b.remaining)}.`} ${over ? `${over} ${over === 1 ? "categoria passou" : "categorias passaram"} do limite.` : "Acompanhe os limites por categoria."} Inclui VA/VR estimado.</p></div><a class="text-button" href="#budget">Revisar orçamento →</a></div>
- <section class="panel transactions-panel"><div class="panel-head"><div><h2>Últimas transações</h2><p>Os movimentos mais recentes do mês</p></div><a class="text-button" href="#transactions">Ver todas →</a></div>${rowTable(recent)}</section>
- <section class="panel overview-budget"><div class="panel-head"><div><h2>De olho no orçamento</h2><p>Ciclo completo do salário · sem filtros</p></div><a class="text-button" href="#budget">Detalhes ↗</a></div><div class="budget-items">${b.lines
-   .filter((l) => l.grupos.length)
-   .sort(
-     (a, b) =>
-       (b.teto ? b.spent / b.teto : 1) - (a.teto ? a.spent / a.teto : 1),
-   )
-   .slice(0, 4)
-   .map(budgetItem)
-   .join(
-     "",
-   )}</div><div class="budget-note">${icon("leaf")} Meta mensal de poupança: ${amount(state.data.budget.monthly_saving)}</div></section></div>
- <p class="info-note">Patrimônio é a posição do último consolidado, incluindo posições declaradas. O resultado mensal exclui transferências próprias, aplicações, pagamento de fatura e eventos patrimoniais identificados. Valores manuais entram no resultado, sem alterar o saldo bancário.</p>`
-  );
+  const recent = s.rows.filter(t => t.kind !== "other").slice(0, 5);
+  const activeFilters = [state.search, ...[state.kind, state.institution, state.group, state.source].filter(v => v !== "all")].filter(Boolean).length;
+  const basis = {cycle: "Ciclo do salário", cash: "Caixa", competence: "Competência"}[state.basis];
+  return `<div class="financial-dashboard">` + pageHead("Visão geral", "", `<button class="button primary" data-action="new-transaction">${icon("plus")} Novo lançamento</button>`) +
+    `<details class="dashboard-filters" ${state.filtersOpen ? "open" : ""}><summary>Filtros${activeFilters ? ` · ${activeFilters} ativos` : ""}<span>${esc(basis)} · ${esc(monthName(state.month))}</span></summary>${filterControls()}${declaredControl()}</details>
+    <div class="kpis">${kpi("Receitas", s.income, basis, "down", false, "positive")}${kpi("Despesas", s.spending, basis, "arrow")}${kpi("Resultado", s.balance, savingRate === null ? "Sem receita identificada" : `${savingRate}% das receitas`, "leaf", true)}${kpi("Patrimônio líquido", d.resumo.liquido, `Posição de ${dateName(d.gerado_em)} · ${state.includeDeclared ? "com" : "sem"} declarados`, "overview")}</div>
+    ${salaryCards()}
+    <div class="grid-main"><section class="panel"><div class="panel-head"><h2>Receitas e despesas</h2><div class="legend"><span><i></i>Receitas</span><span><i class="out"></i>Despesas</span></div></div>${cashChart()}<div class="chart-foot"><span>Últimos 6 meses · ${esc(basis)}</span><a class="text-button" href="#transactions">Ver extrato ↗</a></div></section>
+    <section class="panel"><div class="panel-head"><h2>Despesas por categoria</h2><span class="pill">${monthName(state.month, true)}</span></div>${categoryChart(s)}</section>
+    <section class="panel transactions-panel"><div class="panel-head"><h2>Últimas transações</h2><a class="text-button" href="#transactions">Ver todas →</a></div>${rowTable(recent)}</section>
+    <section class="panel overview-budget"><div class="panel-head"><div><h2>Orçamento</h2><p>Ciclo completo · inclui VA/VR · sem filtros</p></div><a class="text-button" href="#budget">Detalhes ↗</a></div><div class="budget-balance"><span>${b.remaining < 0 ? "Acima do limite" : "Disponível"}</span><strong class="${b.remaining < 0 ? "negative" : "positive"}">${amount(Math.abs(b.remaining))}</strong></div><div class="budget-items">${b.lines.filter(l => l.grupos.length).sort((a,b) => (b.teto ? b.spent/b.teto : 1)-(a.teto ? a.spent/a.teto : 1)).slice(0,3).map(budgetItem).join("")}</div></section></div></div>`;
 }
 function filterControls() {
   return `<div class="filters"><label class="search-input">${icon("search")}<input type="search" id="search" placeholder="Buscar descrição, categoria…" aria-label="Buscar transações" value="${esc(state.search)}"></label><select id="kind" aria-label="Tipo de transação">${options(
@@ -321,6 +311,7 @@ function budget() {
     ) +
     `<div class="metric-strip"><div class="panel"><span>Limite total de consumo</span><strong>${amount(b.limit)}</strong></div><div class="panel"><span>Consumo + VA/VR estimado</span><strong>${amount(b.spent)}</strong></div><div class="panel"><span>${b.remaining < 0 ? "Acima do planejado" : "Disponível no orçamento"}</span><strong class="${b.remaining < 0 ? "negative" : "positive"}">${amount(Math.abs(b.remaining))}</strong></div></div>
  <div class="insight">${icon("goals")}<div><b>Guardar ${amount(config.monthly_saving)} por mês.</b><p>Renda mensal planejada de ${amount(config.monthly_income)}. VA/VR estimado de ${amount(config.benefits_spending)} incluído em alimentação; não é gasto bancário confirmado.</p></div></div>
+ ${salariesPanel()}${cycleDetails()}
  ${b.unallocated ? `<div class="warning-banner" style="margin-top:18px">Há ${amount(b.unallocated)} em categorias sem limite associado. Esse valor já está incluído no consumo total.</div>` : ""}
  <h2 class="section-title">Seus limites por categoria <span class="pill">${b.lines.length} limites</span></h2><div class="budget-grid">${b.lines.map((l) => `<article class="panel budget-card"><div class="panel-head"><h3>${esc(l.nome)}</h3><span class="pill ${l.spent > l.teto ? "red" : ""}">${l.spent > l.teto ? "Acima do limite" : Math.round(percent(l.spent, l.teto)) + "%"}</span></div><div class="budget-amount">${amount(l.spent)} <small>de ${amount(l.teto)}</small></div>${progress(l.spent, l.teto, l.spent > l.teto ? "over" : "")}<div class="budget-sub"><span>${l.spent > l.teto ? "Excedido" : "Disponível"}</span><span>${amount(Math.abs(l.teto - l.spent))}</span></div></article>`).join("")}</div><p class="info-note">O planejamento é recorrente e vale para todos os meses. A edição altera os limites do app; os relatórios detalhados mantêm suas premissas originais.</p>`
   );
@@ -791,6 +782,9 @@ async function refresh() {
   }
 }
 document.querySelector("#refresh").onclick = refresh;
+document.addEventListener("toggle", event => {
+  if (event.target.matches?.(".dashboard-filters")) state.filtersOpen = event.target.open;
+}, true);
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;

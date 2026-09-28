@@ -88,7 +88,7 @@ export function transactionsForBasis(transactions, basis = "cycle", budget = {})
       kind = t.valor < 0 ? "expense" : t.valor > 0 ? "income" : "other";
       if (t.natureza === "fatura") group = "Pagamento de fatura";
       else if (t.natureza === "investimento") group = "Aplicações e resgates";
-      else if (t.natureza === "interna" || t.externa) group = "Transferências próprias";
+      else if (t.natureza === "interna" || (t.externa && !t.is_salary)) group = "Transferências próprias";
     }
     return { ...t, kind, group, competence: t.date.slice(0, 7) };
   });

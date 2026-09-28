@@ -251,6 +251,36 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn('salary_person',rows[2])
         self.assertEqual(len(rows),3)
 
+    def test_salary_portability_requires_exact_confirmed_rule(self):
+        t = {'instituicao':'Banco teste','metodo':'TED','desc':'TED recebida TITULAR TESTE','externa':True}
+        rule = {'person':'aleph','institution':'Banco teste','method':'TED','description':'TED recebida TITULAR TESTE'}
+        self.assertFalse(service.matches_salary_rule(t, rule))
+        confirmed = {**rule,'confirmed_portability':True}
+        self.assertTrue(service.matches_salary_rule(t, confirmed))
+        for changed in [{'desc':'PIX recebido TITULAR TESTE'}, {'instituicao':'Outro banco'}, {'metodo':'PIX'}]:
+            self.assertFalse(service.matches_salary_rule({**t,**changed}, confirmed))
+        self.assertFalse(service.matches_salary_rule(t, {**confirmed,'description':None}))
+        self.assertTrue(service.matches_salary_rule({'instituicao':'Banco teste','metodo':'Salário'}, {'person':'aleph','institution':'Banco teste','method':'Salário'}))
+
+    def test_portability_remains_one_credit_and_does_not_change_balances(self):
+        root = Path(self.directory.name)
+        before = self.client.get('/api/data').json()['finance']['resumo']
+        report = root / 'consolidado-2026-09-27.json'
+        raw = json.loads(report.read_text())
+        t = raw['instituicoes'][0]['contas'][0]['lancamentos'][0]
+        t.update(desc='TED recebida TITULAR TESTE', metodo='TED', externa=True)
+        report.write_text(json.dumps(raw))
+        rule = {'person':'aleph','institution':'Banco teste','method':'TED','description':t['desc'],'confirmed_portability':True}
+        (root / 'salary-rules.json').write_text(json.dumps({'rules':[rule]}))
+        with patch.object(service,'FINANCE_CONFIG',root):
+            service.snapshot.cache_clear()
+            result = self.client.get('/api/data').json()['finance']
+        self.assertEqual(result['resumo'],before)
+        self.assertEqual(len(result['lancamentos']),1)
+        self.assertEqual(result['lancamentos'][0]['salary_person'],'aleph')
+        self.assertTrue(result['lancamentos'][0]['externa'])
+        self.assertEqual(result['lancamentos'][0]['valor'],1000)
+
 
 if __name__ == '__main__':
     unittest.main()
