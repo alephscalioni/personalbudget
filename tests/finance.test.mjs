@@ -58,6 +58,21 @@ test("payments, investments and own transfers are not counted twice", () => {
   assert.equal(totals.balance, 900);
   assert.equal(rows.filter((t) => t.kind === "other").length, 6);
 });
+
+test("overview and transactions retain card consumption in the salary cycle", () => {
+  const app = readFileSync(new URL("../frontend/js/app.js", import.meta.url), "utf8");
+  const view = app.slice(app.indexOf("function viewTransactions()"), app.indexOf("function matchesFilters"));
+  const state = { page: "overview", basis: "cycle", data: { budget: {} }, transactions: classifyPayload({lancamentos: [
+    {...base, conta_tipo: "CREDIT", fatura: "2026-10-07", valor: 100},
+    {...base, natureza: "fatura", valor: -100},
+  ]}) };
+  const getRows = vm.runInNewContext(view + "\nviewTransactions", {state, transactionsForBasis});
+  for (const page of ["overview", "transactions", "budget"]) {
+    state.page = page;
+    assert.equal(monthSummary(getRows(), "2026-10").spending, 100);
+    assert.equal(monthSummary(getRows(), "2026-09").spending, 0);
+  }
+});
 test("refunds reduce spending and card payment is not income", () => {
   const rows = classifyPayload({
     lancamentos: [

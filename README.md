@@ -63,7 +63,9 @@ O orçamento usa consumo identificado mais VA/VR **estimado**. Seus limites são
 
 ## Atualização e cópias de segurança
 
-**Atualizar dados** relê o último consolidado e reconstrói o relatório detalhado. Não chama a Pluggy, não reconecta bancos nem agenda coletas. A coleta original continua em `finance/pluggy/`.
+**Atualizar dados** solicita uma coleta Pluggy quando `PERSONALBUDGET_SYNC_ENABLED=1` e as credenciais estão configuradas. A coleta automática ocorre de hora em hora e regenera o relatório detalhado após atualizar os dados. Se a geração do relatório falhar, os dados bancários atualizados continuam disponíveis e a interface sinaliza o relatório pendente. Sem sincronização configurada, importe os consolidados em `data/reports/`: a API reconhece gerações mais recentes, inclusive depois de iniciada, preservando o snapshot salvo se um novo arquivo estiver inválido.
+
+Novas coletas preservam o identificador do provedor para manter classificações e competências após correções bancárias. Ajustes antigos são migrados quando o lançamento ainda corresponde aos campos originais; snapshots sem identificador do provedor continuam usando a identificação legada.
 
 A exportação JSON guarda planejamento, metas e lançamentos manuais; não há importação de JSON pela interface nesta versão. Para uma cópia recuperável completa, pare o servidor e copie `data/` e os arquivos de configuração de `finance/pluggy/`. Para restaurar, com o servidor parado, recoloque esses arquivos nos mesmos caminhos.
 

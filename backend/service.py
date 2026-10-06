@@ -6,6 +6,7 @@ import io
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from .config import FINANCE, FINANCE_CONFIG, REPORTS
@@ -18,6 +19,27 @@ from gera_dashboard_consolidado import aplica_contrapartes, aplica_mascara, apli
 
 def latest():
     return max(REPORTS.glob('consolidado-*.json'), default=None)
+
+
+def current_snapshot():
+    """Prefer the newest generation, including offline imports after startup."""
+    record = store.get('bank-snapshot', 'current')
+    path = latest()
+    if path and (not record or path.name >= record['source']):
+        try:
+            raw = json.loads(path.read_text(encoding='utf-8'))
+            def generated(value):
+                stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
+            if not record or generated(raw['gerado_em']) > generated(record['raw']['gerado_em']):
+                build(raw)
+                return {'source': path.name, 'raw': raw}
+        except (ValueError, KeyError, TypeError):
+            if not record:
+                raise
+    if record:
+        return record
+    raise FileNotFoundError('Nenhum consolidado disponível. Adicione um arquivo em data/reports.')
 
 
 def salary_plan():
@@ -76,7 +98,12 @@ def prepare(raw):
         identity = [t.get(k) for k in ('instituicao', 'conta', 'conta_tipo', 'data', 'desc', 'valor', 'tipo', 'fatura')]
         digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False).encode()).hexdigest()[:32]
         seen[digest] += 1
-        t['id'] = f'bank-{digest}-{seen[digest]}'
+        legacy_id = f'bank-{digest}-{seen[digest]}'
+        t['id'] = legacy_id
+        if t.get('provider_id'):
+            identity = [t.get('conta_id'), t['provider_id']]
+            t['id'] = 'bank-provider-' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32]
+            t['legacy_id'] = legacy_id
     # Private payer rules identify existing credits without changing bank records.
     rules_path = FINANCE_CONFIG / 'salary-rules.json'
     rules = json.loads(rules_path.read_text()).get('rules', []) if rules_path.exists() else []
@@ -97,15 +124,20 @@ def prepare(raw):
 
 
 def data():
-    record = store.get('bank-snapshot', 'current')
-    path = latest()
-    if path is None and not record:
-        raise FileNotFoundError('Nenhum consolidado disponível. Adicione um arquivo em data/reports.')
+    record = current_snapshot()
     deps = [*(FINANCE_CONFIG / n for n in ['contrapartes.json', 'mascara.json', 'posicoes-manuais.json', 'salary-rules.json'])]
     fingerprints = tuple(p.stat().st_mtime_ns if p.exists() else 0 for p in deps)
-    payload = database_snapshot(json.dumps(record['raw']), fingerprints) if record else snapshot(path, (path.stat().st_mtime_ns, *fingerprints))
+    payload = database_snapshot(json.dumps(record['raw']), fingerprints)
     payload, declared = positions.apply(payload)
     overrides = store.all_of('override')
+    by_id = {o['id']: o for o in overrides}
+    migrated = False
+    for t in payload['lancamentos']:
+        legacy = by_id.get(t.get('legacy_id'))
+        if legacy and t['id'] not in by_id:
+            migrated = store.migrate_override(legacy['id'], t['id']) or migrated
+    if migrated:
+        overrides = store.all_of('override')
     assigned = {o['id'] for o in overrides if o.get('is_salary') and o.get('salary_person')}
     confirmed = {t['desc']:o['salary_person'] for t in payload['lancamentos'] for o in overrides if o['id']==t['id'] and o.get('is_salary') and o.get('salary_person')}
     rules_path = FINANCE_CONFIG / 'salary-rules.json'
@@ -120,7 +152,7 @@ def data():
             if len(root)==8 and re.sub(r'\D','',t.get('desc','')).startswith(root[:5]):
                 t['salary_candidate']=rule['person']
     budgets = store.all_of('budget')
-    return {'source': record['source'] if record else path.name, 'sync': store.get('setting', 'bank-sync') or {}, 'storage': 'postgresql' if store.DATABASE_URL else 'sqlite', 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
+    return {'source': record['source'], 'sync': store.get('setting', 'bank-sync') or {}, 'storage': 'postgresql' if store.DATABASE_URL else 'sqlite', 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
             'salary_plan': salary_plan(), 'cashflow_plans': store.all_of('cashflow'), 'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
 
 

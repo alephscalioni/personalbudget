@@ -86,6 +86,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(backup.json()['budget'][0]['monthly_income'], 5000)
         self.assertNotIn('finance', backup.json())
 
+    def test_newer_offline_snapshot_replaces_seeded_data(self):
+        from backend import bank_sync
+        bank_sync.seed()
+        old = service.latest()
+        raw = json.loads(old.read_text())
+        raw['gerado_em'] = '2026-10-06T12:00:00Z'
+        newest = old.parent / 'consolidado-2026-10-06.json'
+        newest.write_text(json.dumps(raw))
+        self.assertEqual(self.client.get('/api/data').json()['source'], newest.name)
+        bank_sync.seed()
+        self.assertEqual(store.get('bank-snapshot', 'current')['source'], newest.name)
+        raw['gerado_em'] = '2026-10-06T13:00:00Z'
+        raw['instituicoes'][0]['contas'][0]['saldo'] = 250
+        newest.write_text(json.dumps(raw))
+        self.assertEqual(self.client.get('/api/data').json()['finance']['resumo']['caixa'], 250)
+        bank_sync.seed()
+        # A broken subsequent import must not hide the last valid snapshot.
+        (old.parent / 'consolidado-2026-10-07.json').write_text('{}')
+        self.assertEqual(self.client.get('/api/data').json()['source'], newest.name)
+
+    def test_provider_identity_preserves_legacy_adjustments_after_bank_correction(self):
+        path = service.latest()
+        raw = json.loads(path.read_text())
+        original = self.client.get('/api/data').json()['finance']['lancamentos'][0]
+        body = {'competence': '2026-09', 'kind': 'income', 'is_salary': True, 'salary_person': 'aleph'}
+        self.assertEqual(self.client.put('/api/transactions/' + original['id'] + '/classification', json=body).status_code, 200)
+        account = raw['instituicoes'][0]['contas'][0]
+        account['id'] = 'account-1'
+        account['lancamentos'][0]['provider_id'] = 'transaction-1'
+        path.write_text(json.dumps(raw))
+        data = self.client.get('/api/data').json()
+        identifier = data['finance']['lancamentos'][0]['id']
+        self.assertNotEqual(identifier, original['id'])
+        self.assertEqual(data['overrides'][0]['id'], identifier)
+        account['nome'] = 'Conta renomeada'
+        account['lancamentos'][0].update(desc='Descrição corrigida', valor=1100, fatura='2026-10-01')
+        path.write_text(json.dumps(raw))
+        data = self.client.get('/api/data').json()
+        self.assertEqual(data['finance']['lancamentos'][0]['id'], identifier)
+        self.assertEqual(data['overrides'][0]['salary_person'], 'aleph')
+
     def test_privacy_and_local_origin(self):
         self.assertEqual(self.client.post('/api/goals', headers={'Origin': 'https://untrusted.example'}, json={}).status_code, 403)
         self.assertEqual(self.client.get('/api/data', headers={'Host': 'untrusted.example'}).status_code, 400)

@@ -1,5 +1,4 @@
 import {
-  cashflowTransactions,
   cashflowCycle,
   cashflowSummary,
   defaultCashflowLines,
@@ -137,7 +136,7 @@ function kpi(title, value, note, symbol, featured = false, cls = "") {
 }
 function viewTransactions() {
   const basis = state.page === "budget" ? "cycle" : state.basis;
-  return basis === "cycle" && state.page !== "budget" ? cashflowTransactions(state.transactions, state.data.budget) : transactionsForBasis(state.transactions, basis, state.data.budget);
+  return transactionsForBasis(state.transactions, basis, state.data.budget);
 }
 function matchesFilters(t) {
   const query = state.search.toLocaleLowerCase("pt-BR");
@@ -287,6 +286,7 @@ function syncLabel() {
   const sync = state.data.sync || {};
   if (sync.status === "running") return "Sincronizando bancos…";
   if (sync.status === "error") return "Coleta pendente · últimos dados preservados";
+  if (sync.report_error) return "Bancos atualizados · relatório detalhado pendente";
   return sync.last_success ? `Atualizado ${new Date(sync.last_success * 1000).toLocaleString("pt-BR", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} · a cada hora` : "Aguardando sincronização";
 }
 function guideStrip() {

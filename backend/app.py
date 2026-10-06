@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import posixpath
-import shutil
 import sqlite3
 import psycopg
 import subprocess
@@ -82,9 +81,11 @@ def sync_dashboard():
         raise RuntimeError('Consolidado ou gerador indisponível.')
     generated = ROOT / '.runtime' / 'dashboard.html'
     generated.parent.mkdir(exist_ok=True)
-    subprocess.run([sys.executable, str(GENERATOR), '--raw', str(raw), '--out', str(generated)], check=True, capture_output=True, text=True, timeout=120)
-    shutil.copy2(generated, FRONTEND / 'dashboard.html')
-    return {'source': raw.name, 'updated_at': datetime.now(timezone.utc).isoformat(), 'bytes': generated.stat().st_size}
+    with refresh_lock:
+        subprocess.run([sys.executable, str(GENERATOR), '--raw', str(raw), '--out', str(generated)], check=True, capture_output=True, text=True, timeout=120)
+        size = generated.stat().st_size
+        generated.replace(FRONTEND / 'dashboard.html')
+    return {'source': raw.name, 'updated_at': datetime.now(timezone.utc).isoformat(), 'bytes': size}
 
 
 @app.get('/api/health')

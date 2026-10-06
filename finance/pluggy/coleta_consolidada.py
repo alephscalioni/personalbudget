@@ -362,6 +362,7 @@ def coletar(dias: int, fonte: str = "api", strict: bool = False):
             for t in txs:
                 v = tx_amount(t)
                 conta["lancamentos"].append({
+                    "provider_id": t.get("id"),
                     "data": t["date"][:10], "desc": t.get("description"),
                     "categoria": t.get("category"), "tipo": t.get("type"),
                     "valor": v, "moeda": t.get("currencyCode"),

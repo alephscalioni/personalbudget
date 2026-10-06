@@ -116,3 +116,21 @@ def get(kind, identifier):
     with connection() as db:
         row = db.execute('SELECT body FROM documents WHERE kind=? AND id=?', (kind, identifier)).fetchone()
         return json.loads(row['body']) if row else None
+
+
+def migrate_override(old_id, new_id):
+    """Move a legacy adjustment once, without replacing a newer adjustment."""
+    with connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if db.execute('SELECT 1 FROM documents WHERE kind=? AND id=?', ('override', new_id)).fetchone():
+            return False
+        row = db.execute('SELECT body FROM documents WHERE kind=? AND id=?', ('override', old_id)).fetchone()
+        if not row:
+            return False
+        before = json.loads(row['body'])
+        after = dict(before, id=new_id)
+        db.execute('INSERT INTO documents VALUES (?,?,?)', ('override', new_id, json.dumps(after, ensure_ascii=False)))
+        db.execute('DELETE FROM documents WHERE kind=? AND id=?', ('override', old_id))
+        audit(db, 'override', old_id, before, None)
+        audit(db, 'override', new_id, None, after)
+    return True

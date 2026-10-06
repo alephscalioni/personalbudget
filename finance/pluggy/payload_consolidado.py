@@ -24,7 +24,7 @@ def build(raw: dict) -> dict:
                 caixa += c["saldo"]
             for t in c["lancamentos"]:
                 t = dict(t, instituicao=inst["nome"], conta=c["nome"],
-                         conta_tipo=c["tipo"])
+                         conta_tipo=c["tipo"], conta_id=c.get("id"))
                 lanc.append(t)
         inv_total = 0.0
         for v in inst["investimentos"]:

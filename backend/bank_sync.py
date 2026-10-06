@@ -14,10 +14,12 @@ def enabled():
 
 
 def seed():
-    if not store.get('bank-snapshot', 'current'):
-        path = service.latest()
-        if path:
-            store.save('bank-snapshot', {'source':path.name, 'raw':json.loads(path.read_text()), 'imported_at':time.time()}, 'current')
+    try:
+        record = service.current_snapshot()
+    except FileNotFoundError:
+        return
+    if 'imported_at' not in record:
+        store.save('bank-snapshot', dict(record, imported_at=time.time()), 'current')
 
 
 def validate(raw, previous=None):
@@ -74,6 +76,12 @@ def run_once():
         staging.replace(REPORTS / name)
         store.save('bank-snapshot', {'source':name,'raw':raw,'imported_at':time.time()}, 'current')
         status.update(status='ok', last_success=time.time(), error=None, next_run=attempted+3600)
+        try:
+            from .app import sync_dashboard
+            sync_dashboard()
+            status['report_error'] = None
+        except Exception:
+            status['report_error'] = 'Os dados foram atualizados, mas o relatório detalhado não pôde ser regenerado.'
     except Exception:
         status.update(status='error', error='Não foi possível concluir a coleta. Os últimos dados válidos foram preservados.', next_run=attempted+3600)
     current = store.get('setting', 'bank-sync') or {}
