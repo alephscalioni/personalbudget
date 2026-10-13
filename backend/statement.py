@@ -1,6 +1,5 @@
 """Monthly bank cash statement and a trailing moving-average projection."""
 from collections import defaultdict
-from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 import re
 import unicodedata
@@ -49,6 +48,65 @@ def bucket(t, incoming):
     return 'Outras saídas a identificar' if group in ('Outros', 'Transferências', 'Pessoas', 'Sem categoria') else group
 
 
+def direction(t):
+    return t.get('tipo') == 'CREDIT' if t.get('tipo') in ('CREDIT', 'DEBIT') else t.get('valor', 0) > 0
+
+
+def reconcile(finance, transactions, history):
+    """Check account routing and collector anchors; historical balances are derived."""
+    accounts = finance.get('contas', [])
+    by_id, by_label = defaultdict(list), defaultdict(list)
+    for index, account in enumerate(accounts):
+        if account.get('id'):
+            by_id[account['id']].append(index)
+        by_label[(account['instituicao'], account['nome'], account['tipo'])].append(index)
+    assigned = defaultdict(list)
+    unmatched, duplicate_ids, sign_conflicts = [], [], []
+    seen = set()
+    for t in transactions:
+        if t['id'] in seen:
+            duplicate_ids.append(t['id'])
+        seen.add(t['id'])
+        if t.get('tipo') in ('CREDIT', 'DEBIT') and t.get('valor', 0) and ((t['valor'] > 0) != direction(t)):
+            sign_conflicts.append(t['id'])
+        candidates = by_id.get(t.get('conta_id'), []) if t.get('conta_id') else by_label.get((t.get('instituicao'), t.get('conta'), t.get('conta_tipo')), [])
+        if len(candidates) == 1:
+            assigned[candidates[0]].append(t)
+        else:
+            unmatched.append(t['id'])
+    report = []
+    for index, account in enumerate(accounts):
+        grouped = defaultdict(list)
+        for t in assigned[index]:
+            grouped[t['date'][:7]].append(t)
+        closing = cents(account['saldo'])
+        periods = []
+        for row in reversed(history):
+            incoming = sum(cents(t['amount']) for t in grouped[row['month']] if direction(t))
+            outgoing = sum(cents(t['amount']) for t in grouped[row['month']] if not direction(t))
+            opening = closing - incoming + outgoing
+            periods.append({'month': row['month'], 'opening': opening / 100, 'income': incoming / 100,
+                            'spending': outgoing / 100, 'closing': closing / 100, 'count': len(grouped[row['month']])})
+            closing = opening
+        source_opening = account.get('saldo_inicial')
+        difference = closing - cents(source_opening) if source_opening is not None else None
+        report.append({'id': account.get('id') or f'legacy-{index}', 'institution': account['instituicao'], 'name': account['nome'],
+                       'snapshot_balance': account['saldo'], 'source_opening': source_opening,
+                       'opening_difference': difference / 100 if difference is not None else None,
+                       'status': 'difference' if difference not in (None, 0) else 'checked' if difference == 0 else 'derived',
+                       'history': list(reversed(periods))})
+    totals = []
+    for row in history:
+        parts = [next(r for r in account['history'] if r['month'] == row['month']) for account in report]
+        totals.append({'month': row['month'], 'differences': {field: (sum(cents(p[field]) for p in parts) - cents(row[field])) / 100 for field in ('opening', 'income', 'spending', 'closing')}})
+    snapshot_difference = (sum(cents(a['saldo']) for a in accounts) - cents(finance['resumo']['caixa'])) / 100
+    consistent = bool(accounts) and not (unmatched or duplicate_ids or sign_conflicts or snapshot_difference) and all(a['status'] != 'difference' for a in report) and all(not any(r['differences'].values()) for r in totals)
+    return {'accounts': report, 'totals': totals, 'snapshot_difference': snapshot_difference,
+            'unmatched_transaction_ids': unmatched, 'duplicate_transaction_ids': duplicate_ids,
+            'sign_conflict_ids': sign_conflicts, 'status': 'consistent' if consistent else 'unavailable' if not accounts else 'difference',
+            'basis': 'Conferência dos saldos da coleta, sinais e soma dos movimentos por conta. Saldos mensais reconstruídos; o saldo inicial da coleta também é derivado, não um extrato histórico independente.'}
+
+
 def build(data, window=3, horizon=6):
     finance = data['finance']
     as_of = finance['gerado_em'][:10]
@@ -72,14 +130,14 @@ def build(data, window=3, horizon=6):
     for month in reversed(months):
         incoming, outgoing = defaultdict(lambda: {'value': 0, 'transactions': [], 'operational': True}), defaultdict(lambda: {'value': 0, 'transactions': [], 'operational': True})
         for t in rows[month]:
-            positive = t.get('tipo') == 'CREDIT' if t.get('tipo') in ('CREDIT', 'DEBIT') else t.get('valor', 0) > 0
+            positive = direction(t)
             name = bucket(t, positive)
             entry = (incoming if positive else outgoing)[name]
             entry['value'] += cents(t['amount'])
             # Invoice payments are operational cash, even though kind is "other".
             operational = t['kind'] in ('income', 'expense', 'refund') or t.get('natureza') == 'fatura' or t.get('categoria') == 'Credit card payment'
             entry['operational'] = entry['operational'] and operational
-            entry['transactions'].append({k: t.get(k) for k in ('id', 'date', 'description', 'amount', 'kind', 'group', 'category', 'classification')})
+            entry['transactions'].append({k: t.get(k) for k in ('id', 'date', 'description', 'amount', 'kind', 'group', 'category', 'classification', 'instituicao', 'conta', 'conta_id')})
         for name in ('Financiamento', 'Condomínio', 'Contas residenciais', 'Alimentação', 'Faturas dos cartões', 'Outras saídas a identificar'):
             outgoing[name]  # Keep the main cost lines visible even with no payment.
         incoming['Outras receitas a identificar']
@@ -122,4 +180,5 @@ def build(data, window=3, horizon=6):
             'window': window, 'sample_months': [r['month'] for r in eligible], 'sample_count': count, 'horizon': horizon,
             'average_income': average_income / 100 if count else None, 'average_spending': average_spending / 100 if count else None,
             'average_incoming': average_rows['incoming'], 'average_outgoing': average_rows['outgoing'],
+            'reconciliation': reconcile(finance, transactions, history),
             'balance_source': 'Saldo bancário da coleta; saldos anteriores reconstruídos pelos movimentos disponíveis.'}

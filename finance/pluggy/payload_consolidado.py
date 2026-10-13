@@ -8,7 +8,7 @@ PARCELA = re.compile(r"\b(\d{1,2})\s*/\s*(\d{1,2})\s*$")
 
 
 def build(raw: dict) -> dict:
-    inst_out, cartoes, invs, lanc = [], [], [], []
+    inst_out, cartoes, invs, lanc, contas = [], [], [], [], []
     for inst in raw["instituicoes"]:
         caixa = divida = 0.0
         for c in inst["contas"]:
@@ -22,6 +22,8 @@ def build(raw: dict) -> dict:
                 })
             else:
                 caixa += c["saldo"]
+                contas.append({'id': c.get('id'), 'instituicao': inst['nome'], 'nome': c['nome'],
+                               'tipo': c['tipo'], 'saldo': c['saldo'], 'saldo_inicial': c.get('saldo_inicial')})
             for t in c["lancamentos"]:
                 t = dict(t, instituicao=inst["nome"], conta=c["nome"],
                          conta_tipo=c["tipo"], conta_id=c.get("id"))
@@ -116,7 +118,7 @@ def build(raw: dict) -> dict:
                    "comprometido": comprometido, "proxima_parcela": proxima,
                    "intl_brl": intl_total, "intl_usd": intl_usd,
                    "n_instituicoes": len(inst_out), "n_lancamentos": len(lanc)},
-        "instituicoes": inst_out, "cartoes": cartoes,
+        "instituicoes": inst_out, "cartoes": cartoes, "contas": contas,
         "investimentos": sorted(invs, key=lambda x: -x["saldo"]),
         "classes": classes, "categorias": categorias, "top_merchants": top,
         "parcelas": parcelas,

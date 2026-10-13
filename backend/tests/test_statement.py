@@ -73,6 +73,63 @@ class StatementTests(unittest.TestCase):
         report=build(data([manual,future],start='2026-09-01'))
         self.assertTrue(all(r['opening']==1000 and r['closing']==1000 for r in report['history']))
 
+    def account_fixture(self):
+        incoming=transaction('in','2026-09-01',100,True)
+        outgoing=transaction('out','2026-09-02',70)
+        for t in (incoming,outgoing):
+            t.update(conta_id='a',instituicao='Banco',conta='Conta A')
+        d=data([incoming,outgoing],balance=1030)
+        d['finance']['contas']=[{'id':'a','instituicao':'Banco','nome':'Conta A','tipo':'BANK','saldo':1030,'saldo_inicial':1000}]
+        return d
+
+    def test_account_totals_and_collector_anchor_reconcile(self):
+        report=build(self.account_fixture())['reconciliation']
+        self.assertEqual(report['status'],'consistent')
+        self.assertEqual(report['accounts'][0]['opening_difference'],0)
+        self.assertTrue(all(not any(row['differences'].values()) for row in report['totals']))
+        september=next(row for row in report['accounts'][0]['history'] if row['month']=='2026-09')
+        self.assertEqual(september,{'month':'2026-09','opening':1000,'income':100,'spending':70,'closing':1030,'count':2})
+
+    def test_missing_account_anchor_difference_and_sign_conflict_are_visible(self):
+        for issue in ('missing','anchor','sign'):
+            d=self.account_fixture()
+            if issue=='missing': d['transactions'][0]['conta_id']='unknown'
+            if issue=='anchor': d['finance']['contas'][0]['saldo_inicial']=900
+            if issue=='sign': d['transactions'][1]['valor']=70
+            report=build(d)['reconciliation']
+            self.assertEqual(report['status'],'difference',issue)
+            if issue=='missing':self.assertEqual(report['unmatched_transaction_ids'],['in'])
+            if issue=='anchor':self.assertEqual(report['accounts'][0]['opening_difference'],100)
+            if issue=='sign':self.assertEqual(report['sign_conflict_ids'],['out'])
+
+    def test_duplicate_transactions_are_not_reported_as_reconciled(self):
+        d=self.account_fixture()
+        d['transactions'].append(dict(d['transactions'][0]))
+        report=build(d)['reconciliation']
+        self.assertEqual(report['status'],'difference')
+        self.assertEqual(report['duplicate_transaction_ids'],['in'])
+
+    def test_internal_transfer_reconciles_both_accounts_and_consolidated_cash(self):
+        sent=transaction('sent','2026-09-01',200)
+        received=transaction('received','2026-09-01',200,True)
+        for t,identifier,name in ((sent,'a','A'),(received,'b','B')):
+            t.update(kind='other',natureza='interna',conta_id=identifier,instituicao='Banco',conta=name)
+        d=data([sent,received],balance=1500)
+        d['finance']['contas']=[{'id':'a','instituicao':'Banco','nome':'A','tipo':'BANK','saldo':800,'saldo_inicial':1000},{'id':'b','instituicao':'Banco','nome':'B','tipo':'BANK','saldo':700,'saldo_inicial':500}]
+        report=build(d)['reconciliation']
+        self.assertEqual(report['status'],'consistent')
+        self.assertEqual(report['accounts'][0]['history'][-1]['closing'],800)
+        self.assertEqual(report['accounts'][1]['history'][-1]['closing'],700)
+        self.assertTrue(all(not any(row['differences'].values()) for row in report['totals']))
+
+    def test_legacy_duplicate_account_names_are_not_silently_combined(self):
+        d=self.account_fixture()
+        for t in d['transactions']:t['conta_id']=None
+        d['finance']['contas'].append(dict(d['finance']['contas'][0],id='b',saldo=0,saldo_inicial=0))
+        report=build(d)['reconciliation']
+        self.assertEqual(report['status'],'difference')
+        self.assertEqual(len(report['unmatched_transaction_ids']),2)
+
     def test_december_rollover_and_negative_cash(self):
         row=transaction('out','2026-11-01',100)
         report=build(data([row],as_of='2026-12-01',start='2026-11-01',balance=50),horizon=2)

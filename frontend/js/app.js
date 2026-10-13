@@ -66,6 +66,7 @@ const state = {
   forecastWindow: 3,
   statementLoading: false,
   flowMode: "monthly",
+  statementDetail: null,
   kaleuMessages: [],
 };
 const content = document.querySelector("#content");
@@ -258,27 +259,51 @@ function currentCashflow(month = state.month) {
 function statementEntries(entries, sign) {
   return entries.map(e => `<tr><td><details><summary>${esc(e.name)} <small>${e.transactions.length} lançamentos${e.operational ? "" : " · movimentação patrimonial"}</small></summary><div class="statement-transactions">${e.transactions.map(t => `<div class="flow-transaction"><span>${dateName(t.date)} · ${esc(t.description)}</span>${amount(t.amount)}<button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></div>`).join("")}</div></details></td><td class="right">${sign} ${amount(e.amount)}</td></tr>`).join("");
 }
+function statementMatrix(periods, id, detailed = true) {
+  if (!periods.length) return empty("Sem meses disponíveis", "Os meses aparecerão depois da coleta bancária.");
+  const head = `<thead><tr><th scope="col">Movimentação</th>${periods.map(r=>`<th scope="col" class="right">${esc(monthName(r.month, true))}<small class="statement-status">${r.status === "partial" ? "Parcial" : r.status === "forecast" ? "Projeção" : r.status === "estimate" ? "Estimado" : "Histórico"}</small></th>`).join("")}</tr></thead>`;
+  const total = (name, field, className = "") => `<tr class="${className}"><th scope="row">${esc(name)}</th>${periods.map(r=>`<td class="right ${field === "closing" && r[field] < 0 ? "negative" : ""}">${amount(r[field])}</td>`).join("")}</tr>`;
+  const lines = side => {
+    if (!detailed) return "";
+    const names=[...new Set(periods.flatMap(r=>(r[side]||[]).map(e=>e.name)))];
+    const order = side === "outgoing" ? ["Financiamento","Condomínio","Contas residenciais","Alimentação","Faturas dos cartões","Outras saídas a identificar"] : [];
+    names.sort((a,b)=>{
+      const rank = name => side === "incoming" ? name.startsWith("Salário") ? 0 : /Transferências|patrimoniais/.test(name) ? 2 : 1 : order.includes(name) ? order.indexOf(name) : /Transferências|patrimoniais/.test(name) ? 99 : 50;
+      return rank(a)-rank(b)||a.localeCompare(b,"pt-BR");
+    });
+    return names.map(name=>`<tr><th scope="row" class="statement-line-name">${esc(name)}</th>${periods.map(r=>{
+      const e=(r[side]||[]).find(item=>item.name===name);
+      return `<td class="right">${e?.transactions?.length ? `<button type="button" class="statement-cell" data-action="statement-evidence" data-month="${esc(r.month)}" data-side="${side}" data-name="${esc(name)}" aria-label="Ver ${esc(name)} em ${esc(monthName(r.month))}">${amount(e.amount)}</button>` : amount(e?.amount || 0)}</td>`;
+    }).join("")}</tr>`).join("");
+  };
+  return `<div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="${id}" style="min-width:${200+periods.length*130}px"><caption>${detailed ? "Demonstrativo por mês. Selecione um valor para conferir seus lançamentos." : "Projeção mensal pela média móvel."}</caption>${head}<tbody>${total("Saldo inicial","opening","statement-total")}${total("Entradas","income","statement-section")}${lines("incoming")}${total("Saídas","spending","statement-section")}${lines("outgoing")}</tbody><tfoot>${total(detailed ? "Saldo final / até a coleta" : "Saldo final projetado","closing","statement-total")}</tfoot></table></div>`;
+}
+function reconciliationMatrix(report, periods) {
+  const reconciliation=report.reconciliation;
+  if(!reconciliation?.accounts?.length) return `<section class="panel">${empty("Conciliação por conta indisponível", "Os saldos individuais das contas precisam estar disponíveis na coleta.")}</section>`;
+  const labels={checked:"Fecha com a coleta",derived:"Saldo inicial reconstruído",difference:"Diferença a conferir"};
+  const fields=[["Saldo inicial","opening"],["Entradas","income"],["Saídas","spending"],["Saldo final / até a coleta","closing"]];
+  return `<section class="panel"><div class="panel-head"><div><h2>Conciliação das contas bancárias</h2><p>${reconciliation.status === "consistent" ? "Os valores por conta fecham com o demonstrativo e a coleta." : "Há diferenças ou informações insuficientes para conferir."}</p></div></div><div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="account-reconciliation" style="min-width:${200+periods.length*130}px"><caption>Saldo inicial + entradas − saídas = saldo final, para cada conta.</caption><thead><tr><th scope="col">Conta e movimentação</th>${periods.map(r=>`<th scope="col" class="right">${esc(monthName(r.month,true))}${r.status === "partial" ? '<small class="statement-status">Parcial</small>' : ""}</th>`).join("")}</tr></thead><tbody>${reconciliation.accounts.map(account=>`<tr class="statement-section"><th colspan="${periods.length+1}" scope="rowgroup">${esc(account.institution)} · ${esc(account.name)}<small class="statement-status">${labels[account.status]}${account.opening_difference ? " · diferença no saldo inicial: "+money(account.opening_difference) : ""}</small></th></tr>${fields.map(([name,field])=>`<tr class="${field === "closing" ? "statement-total" : ""}"><th scope="row" class="statement-line-name">${name}</th>${periods.map(r=>{const period=account.history.find(p=>p.month===r.month);return `<td class="right ${field === "closing" && period?.[field]<0 ? "negative" : ""}">${period ? amount(period[field]) : "—"}</td>`;}).join("")}</tr>`).join("")}`).join("")}</tbody><tfoot><tr class="statement-total"><th scope="row">Diferença: contas × demonstrativo</th>${periods.map(r=>{const differences=reconciliation.totals.find(t=>t.month===r.month)?.differences || {};const values=Object.values(differences);return `<td class="right ${values.some(v=>v!==0) ? "negative" : ""}">${values.some(v=>v!==0) ? Object.entries(differences).filter(([,v])=>v!==0).map(([k,v])=>`${esc({opening:"Inicial",income:"Entradas",spending:"Saídas",closing:"Final"}[k])}: ${money(v)}`).join("<br>") : amount(0)}</td>`;}).join("")}</tr></tfoot></table></div><p class="info-note">${esc(reconciliation.basis)}</p>${reconciliation.status === "difference" ? `<p class="info-note">${reconciliation.unmatched_transaction_ids.length} lançamentos sem conta identificada; ${reconciliation.duplicate_transaction_ids.length} identificadores duplicados; ${reconciliation.sign_conflict_ids.length} sinais inconsistentes. Diferença no total dos saldos da coleta: ${amount(reconciliation.snapshot_difference)}.</p>` : ""}</section>`;
+}
+function statementEvidence(report) {
+  const selected=state.statementDetail;
+  if(!selected) return "";
+  const row=report.history.find(r=>r.month===selected.month);
+  const entry=row?.[selected.side]?.find(e=>e.name===selected.name);
+  if(!entry) return "";
+  return `<section class="panel" id="statement-evidence"><div class="panel-head"><div><h2>${esc(entry.name)} · ${esc(monthName(selected.month))}</h2><p>${entry.transactions.length} lançamentos · total ${amount(entry.amount)}</p></div><button type="button" class="text-button" data-action="close-statement-evidence">Fechar detalhes</button></div>${entry.transactions.map(t=>`<div class="flow-transaction"><span>${dateName(t.date)} · ${esc(t.description)}<small class="statement-status">${esc(t.instituicao||"")} · ${esc(t.conta||"")}</small></span>${amount(t.amount)}<button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></div>`).join("")}</section>`;
+}
 function cashflow() {
   const switcher = `<button type="button" class="text-button" data-action="toggle-flow">${state.flowMode === "monthly" ? "Ver planejamento por ciclo" : "Voltar ao demonstrativo mensal"}</button>`;
   if (state.flowMode === "cycle") return switcher + cycleCashflow();
   const report = state.data.statement;
   if (!report) return pageHead("Fluxo de caixa", "Demonstrativo mensal") + empty("Demonstrativo indisponível", "O backend precisa estar atualizado para calcular os saldos e a média móvel.");
-  const actual = report.history.find(r => r.month === state.month);
-  const forecast = report.forecast.find(r => r.month === state.month);
-  const row = actual || forecast;
   const sample = report.sample_months.map(m => monthName(m, true)).join(", ");
   const controls = `<label class="statement-window">Média móvel<select id="forecast-window" ${state.statementLoading ? "disabled" : ""}>${options([[3,"3 meses"],[6,"6 meses"],[12,"12 meses"]],state.forecastWindow)}</select></label>${switcher}`;
   const headline = pageHead("Fluxo de caixa", "Saldo inicial → entradas → saídas → saldo final", controls);
-  const historyRows = report.history.slice(-6).map(r => `<tr><td>${esc(monthName(r.month))}<small class="statement-status">${r.status === "partial" ? "Parcial" : "Histórico"}</small></td><td class="right">${amount(r.opening)}</td><td class="right">${amount(r.income)}</td><td class="right">${amount(r.spending)}</td><td class="right ${r.closing < 0 ? "negative" : ""}">${amount(r.closing)}</td></tr>`).join("");
-  const tableHead = `<tr><th>Mês</th><th class="right">Saldo inicial</th><th class="right">Entradas</th><th class="right">Saídas</th><th class="right">Saldo final</th></tr>`;
-  const projected = report.forecast.length ? `<div class="table-wrap"><table class="statement-history"><thead>${tableHead}</thead><tbody>${report.forecast.map(r => `<tr><td>${esc(monthName(r.month))}<small class="statement-status">${r.status === "estimate" ? "Estimativa de fechamento" : "Projeção"}</small></td><td class="right">${amount(r.opening)}</td><td class="right">${amount(r.income)}</td><td class="right">${amount(r.spending)}</td><td class="right ${r.closing < 0 ? "negative" : ""}">${amount(r.closing)}</td></tr>`).join("")}</tbody></table></div>` : empty("Ainda não há mês completo para a média", "Assim que houver histórico de um mês completo, a projeção aparecerá aqui.");
-  let detail = empty("Sem demonstrativo para este mês", "Selecione um mês do histórico ou da projeção.");
-  if (row) {
-    const estimated = !actual;
-    const incoming = actual ? statementEntries(actual.incoming, "+") : report.average_incoming.map(e=>`<tr><td>${esc(e.name)} <small>· média móvel</small></td><td class="right">+ ${amount(e.amount)}</td></tr>`).join("");
-    const outgoing = actual ? statementEntries(actual.outgoing, "−") : report.average_outgoing.map(e=>`<tr><td>${esc(e.name)} <small>· média móvel</small></td><td class="right">− ${amount(e.amount)}</td></tr>`).join("");
-    detail = `<section class="panel statement-panel"><div class="panel-head"><div><h2>${esc(monthName(state.month))}</h2><p>${estimated ? "Valores projetados pela média móvel" : actual.status === "partial" ? "Movimentos disponíveis · mês parcial" : "Movimentos disponíveis · mês encerrado"}</p></div><span class="pill">${estimated ? "Projetado" : "Histórico"}</span></div><table class="statement-detail"><thead><tr><th>Movimentação</th><th class="right">Valor</th></tr></thead><tbody><tr class="statement-total"><th>Saldo inicial</th><td class="right">${amount(row.opening)}</td></tr><tr class="statement-section"><th>Entradas</th><td class="right">+ ${amount(row.income)}</td></tr>${incoming || '<tr><td colspan="2">Nenhuma entrada identificada.</td></tr>'}<tr class="statement-section"><th>Saídas</th><td class="right">− ${amount(row.spending)}</td></tr>${outgoing || '<tr><td colspan="2">Nenhuma saída identificada.</td></tr>'}</tbody><tfoot><tr class="statement-total"><th>${actual?.status === "partial" ? "Saldo até a coleta" : "Saldo final"}</th><td class="right ${row.closing < 0 ? "negative" : ""}">${amount(row.closing)}</td></tr></tfoot></table><p class="info-note">Saldo inicial + entradas − saídas = saldo final. ${esc(report.balance_source)} Lançamentos manuais e investimentos declarados não alteram este saldo bancário.</p></section>`;
-  }
+  const periods=report.history.filter(r=>r.month<=state.month).slice(-6);
+  const detail=`<section class="panel statement-panel"><div class="panel-head"><div><h2>Demonstrativo dos últimos meses</h2><p>Entradas e saídas por tipo · meses lado a lado</p></div></div>${statementMatrix(periods,"monthly-statement")}<p class="info-note">Saldo inicial + entradas − saídas = saldo final. ${esc(report.balance_source)} O mês parcial mostra o saldo até a coleta. Compras no cartão saem do caixa no pagamento da fatura.</p></section>${statementEvidence(report)}${reconciliationMatrix(report,periods)}`;
+  const projected=report.forecast.length ? statementMatrix(report.forecast,"statement-projection",false) : empty("Ainda não há mês completo para a média", "A projeção aparecerá quando houver histórico de um mês completo.");
   const spending = state.transactions.filter(t => t.date.slice(0,7) === state.month && ["expense","refund"].includes(t.kind));
   const groups = new Map();
   for (const t of spending) {
@@ -288,7 +313,7 @@ function cashflow() {
     groups.get(name).total += expense(t);
   }
   const consumption = `<section class="panel"><div class="panel-head"><div><h2>Tipos de gasto em ${esc(monthName(state.month))}</h2><p>Consumo pela data da compra · banco e cartão · estornos descontados</p></div></div>${groups.size ? `<table class="statement-detail"><thead><tr><th>Categoria e lançamentos</th><th class="right">Gasto líquido</th></tr></thead><tbody>${[...groups.entries()].sort((a,b)=>b[1].total-a[1].total).map(([name,g])=>`<tr><td><details><summary>${esc(name)} <small>${g.rows.length} lançamentos</small></summary>${g.rows.map(t=>`<div class="flow-transaction"><span>${esc(t.category)} · ${esc(t.description)}</span>${amount(expense(t))}</div>`).join("")}</details></td><td class="right">${amount(sum(g.rows.map(expense)))}</td></tr>`).join("")}</tbody><tfoot><tr><th>Total do consumo</th><td class="right">${amount(sum(spending.map(expense)))}</td></tr></tfoot></table>` : empty("Sem consumo identificado neste mês", "Compras e estornos aparecem aqui quando importados ou registrados.")}<p class="info-note">Alimentação e outros gastos no cartão aparecem aqui. No demonstrativo de caixa, a saída ocorre no pagamento da fatura; estes valores não são somados novamente ao caixa.</p></section>`;
-  return headline + `<p class="info-note">Saldo bancário na coleta de ${dateName(report.as_of)}: ${amount(report.snapshot_balance)}. Abra as linhas para conferir os lançamentos.</p>` + detail + consumption + `<section class="panel"><div class="panel-head"><div><h2>Próximos ${report.horizon} meses</h2><p>Média móvel de ${report.sample_count} mês${report.sample_count === 1 ? "" : "es"} completo${report.sample_count === 1 ? "" : "s"}${sample ? " · " + esc(sample) : ""}</p></div></div>${state.statementLoading ? '<p role="status">Atualizando a média móvel…</p>' : projected}<p class="info-note">O mês atual combina o realizado com o que falta para atingir a média. Cada saldo final financia o mês seguinte. A projeção mantém a média de receitas e pagamentos; não presume novos resgates, aplicações ou transferências próprias. Não inclui reajustes, despesas futuras cadastradas ou calendário de vencimentos. ${report.sample_count < report.window ? "Há menos meses completos do que a janela escolhida." : ""}</p><details><summary>Ver médias por tipo de entrada e saída</summary><div class="statement-averages"><div><h3>Entradas por mês</h3>${report.average_incoming.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div><div><h3>Saídas por mês</h3>${report.average_outgoing.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div></div></details></section><section class="panel"><div class="panel-head"><h2>Últimos meses</h2></div><div class="table-wrap"><table class="statement-history"><thead>${tableHead}</thead><tbody>${historyRows}</tbody></table></div></section>`;
+  return headline + `<p class="info-note">Saldo bancário na coleta de ${dateName(report.as_of)}: ${amount(report.snapshot_balance)}. Abra as linhas para conferir os lançamentos.</p>` + detail + consumption + `<section class="panel"><div class="panel-head"><div><h2>Próximos ${report.horizon} meses</h2><p>Média móvel de ${report.sample_count} mês${report.sample_count === 1 ? "" : "es"} completo${report.sample_count === 1 ? "" : "s"}${sample ? " · " + esc(sample) : ""}</p></div></div>${state.statementLoading ? '<p role="status">Atualizando a média móvel…</p>' : projected}<p class="info-note">O mês atual combina o realizado com o que falta para atingir a média. Cada saldo final financia o mês seguinte. A projeção mantém a média de receitas e pagamentos; não presume novos resgates, aplicações ou transferências próprias. Não inclui reajustes, despesas futuras cadastradas ou calendário de vencimentos. ${report.sample_count < report.window ? "Há menos meses completos do que a janela escolhida." : ""}</p><details><summary>Ver médias por tipo de entrada e saída</summary><div class="statement-averages"><div><h3>Entradas por mês</h3>${report.average_incoming.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div><div><h3>Saídas por mês</h3>${report.average_outgoing.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div></div></details></section>`;
 }
 function cycleCashflow() {
   const f=currentCashflow();
@@ -904,6 +929,17 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
+  if (action === "statement-evidence") {
+    state.statementDetail={month:button.dataset.month,side:button.dataset.side,name:button.dataset.name};
+    render();
+    document.querySelector("#statement-evidence")?.scrollIntoView({block:"nearest"});
+    return;
+  }
+  if (action === "close-statement-evidence") {
+    state.statementDetail=null;
+    render();
+    return;
+  }
   if (action === "toggle-flow") {
     state.flowMode = state.flowMode === "monthly" ? "cycle" : "monthly";
     render();
