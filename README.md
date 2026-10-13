@@ -158,3 +158,9 @@ A projeção usa uma média móvel simples de 3, 6 ou 12 meses completos, com me
 
 
 O demonstrativo compara os últimos seis meses até o mês selecionado em colunas, com linhas por tipo de entrada e saída. Os valores com lançamentos são clicáveis para conferência. O bloco de conciliação mostra o mesmo período por conta bancária, com saldo inicial, entradas, saídas e saldo final. A soma das contas é comparada ao demonstrativo e ao saldo atual da coleta, em centavos. Também são sinalizados lançamentos sem conta, IDs duplicados, sinais inconsistentes e diferenças em relação ao saldo inicial do coletor. Esse saldo inicial do coletor é derivado do próprio extrato; a conciliação não substitui a conferência com um extrato histórico independente.
+
+
+No fluxo mensal, **Receitas** e **Despesas** mostram apenas movimentos operacionais. Aplicações, resgates, transferências próprias e outros movimentos fora do resultado entram separadamente em **Movimentações financeiras**, pelo valor líquido. A fórmula é saldo inicial + receitas − despesas + movimentos financeiros = saldo final bancário. Posições e saldos investidos não entram em nenhum movimento; rendimentos creditados como receita continuam sendo receita. Os débitos efetivos de aplicação reduzem o saldo da conta, mas não são despesas de consumo. O demonstrativo, os gastos por categoria, a conciliação e a projeção ficam em abas, cada uma com uma tabela compacta.
+
+
+As categorias do demonstrativo e da visão de consumo expandem dentro da própria tabela: categoria → subcategoria → lançamentos. Alimentação, por exemplo, abre Mercado, Restaurantes e Delivery quando esses subgrupos estão presentes nos dados. Todas as linhas mantêm as mesmas colunas mensais; os subgrupos somam exatamente o total da categoria. As aplicações efetivas continuam nas movimentações financeiras; saldos investidos não são tratados como despesas.

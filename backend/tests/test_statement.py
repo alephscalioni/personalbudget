@@ -73,6 +73,51 @@ class StatementTests(unittest.TestCase):
         report=build(data([manual,future],start='2026-09-01'))
         self.assertTrue(all(r['opening']==1000 and r['closing']==1000 for r in report['history']))
 
+    def test_investment_holdings_are_never_cash_movements(self):
+        d=data([transaction('purchase','2026-09-01',100)],start='2026-09-01',balance=900)
+        before=build(d)
+        d['finance']['investimentos']=[{'nome':'Carteira','saldo':999999}]
+        d['finance']['resumo']['investimentos']=999999
+        after=build(d)
+        self.assertEqual(before['history'],after['history'])
+        self.assertEqual(before['forecast'],after['forecast'])
+        self.assertEqual(after['history'][0]['operating_spending'],100)
+        self.assertEqual(after['history'][0]['financial_net'],0)
+
+    def test_applications_and_redemptions_are_separate_from_revenue_and_expenses(self):
+        application=transaction('apply','2026-09-01',200)
+        application.update(kind='other',natureza='investimento',categoria='Investments')
+        redemption=transaction('redeem','2026-09-02',50,True)
+        redemption.update(kind='other',natureza='investimento',categoria='Investments')
+        report=build(data([application,redemption],start='2026-09-01',balance=850))
+        row=report['history'][0]
+        self.assertEqual(row['opening'],1000)
+        self.assertEqual(row['operating_income'],0)
+        self.assertEqual(row['operating_spending'],0)
+        self.assertEqual(row['financial_net'],-150)
+        self.assertEqual(row['financial_outgoing'][0]['name'],'Aplicações em investimentos')
+        self.assertEqual(row['financial_incoming'][0]['name'],'Resgates de investimentos')
+        self.assertEqual(row['operating_balance']+row['financial_net'],row['closing'])
+        self.assertEqual(report['average_income'],0)
+        self.assertEqual(report['average_spending'],0)
+
+    def test_unidentified_other_movements_are_not_called_investments(self):
+        row=transaction('unknown','2026-09-01',100)
+        row.update(kind='other',natureza='unknown')
+        report=build(data([row],start='2026-09-01',balance=900))
+        self.assertEqual(report['history'][0]['financial_outgoing'][0]['name'],'Outras movimentações a conferir')
+
+    def test_forecast_preserves_actual_financial_movements_in_current_month(self):
+        rows=[transaction('salary','2026-09-01',1000,True),transaction('cost','2026-09-02',500),transaction('oct-salary','2026-10-01',200,True),transaction('oct-cost','2026-10-02',100)]
+        application=transaction('apply','2026-10-03',200)
+        application.update(kind='other',natureza='investimento')
+        rows.append(application)
+        report=build(data(rows,start='2026-09-01',balance=1000))
+        for row in report['forecast']:
+            self.assertAlmostEqual(row['opening']+row['operating_income']-row['operating_spending']+row['financial_net'],row['closing'],places=2)
+        self.assertEqual(report['forecast'][0]['financial_net'],-200)
+        self.assertTrue(all(r['financial_net']==0 for r in report['forecast'][1:]))
+
     def account_fixture(self):
         incoming=transaction('in','2026-09-01',100,True)
         outgoing=transaction('out','2026-09-02',70)

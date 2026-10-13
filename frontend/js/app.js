@@ -67,6 +67,8 @@ const state = {
   statementLoading: false,
   flowMode: "monthly",
   statementDetail: null,
+  sheetView: "monthly",
+  sheetExpanded: new Set(),
   kaleuMessages: [],
 };
 const content = document.querySelector("#content");
@@ -256,65 +258,124 @@ function salariesPanel() {
 function currentCashflow(month = state.month) {
   return cashflowSummary(state.transactions,month,state.data.budget,(state.data.cashflow_plans || []).find(p=>p.month===month),state.data.salary_plan);
 }
-function statementEntries(entries, sign) {
-  return entries.map(e => `<tr><td><details><summary>${esc(e.name)} <small>${e.transactions.length} lançamentos${e.operational ? "" : " · movimentação patrimonial"}</small></summary><div class="statement-transactions">${e.transactions.map(t => `<div class="flow-transaction"><span>${dateName(t.date)} · ${esc(t.description)}</span>${amount(t.amount)}<button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></div>`).join("")}</div></details></td><td class="right">${sign} ${amount(e.amount)}</td></tr>`).join("");
+const sheetNumber = value => `<span class="money">${new Intl.NumberFormat("pt-BR", {minimumFractionDigits:2,maximumFractionDigits:2}).format(value || 0)}</span>`;
+const sheetMonth = month => `${monthName(month,true).replace(".","")}/${month.slice(2,4)}`;
+function sheetMetrics(row) {
+  const operatingIncome=row.operating_income ?? (row.incoming ? sum(row.incoming.filter(e=>e.operational).map(e=>e.amount)) : row.income);
+  const operatingSpending=row.operating_spending ?? (row.outgoing ? sum(row.outgoing.filter(e=>e.operational).map(e=>e.amount)) : row.spending);
+  return {...row,operating_income:operatingIncome,operating_spending:operatingSpending,
+    operating_balance:sum([row.opening,operatingIncome,-operatingSpending]),
+    financial_net:row.financial_net ?? sum([row.income,-operatingIncome,-row.spending,operatingSpending])};
 }
-function statementMatrix(periods, id, detailed = true) {
-  if (!periods.length) return empty("Sem meses disponíveis", "Os meses aparecerão depois da coleta bancária.");
-  const head = `<thead><tr><th scope="col">Movimentação</th>${periods.map(r=>`<th scope="col" class="right">${esc(monthName(r.month, true))}<small class="statement-status">${r.status === "partial" ? "Parcial" : r.status === "forecast" ? "Projeção" : r.status === "estimate" ? "Estimado" : "Histórico"}</small></th>`).join("")}</tr></thead>`;
-  const total = (name, field, className = "") => `<tr class="${className}"><th scope="row">${esc(name)}</th>${periods.map(r=>`<td class="right ${field === "closing" && r[field] < 0 ? "negative" : ""}">${amount(r[field])}</td>`).join("")}</tr>`;
-  const lines = side => {
-    if (!detailed) return "";
-    const names=[...new Set(periods.flatMap(r=>(r[side]||[]).map(e=>e.name)))];
-    const order = side === "outgoing" ? ["Financiamento","Condomínio","Contas residenciais","Alimentação","Faturas dos cartões","Outras saídas a identificar"] : [];
+function sheetSubcategory(t) {
+  const category=t.category || t.categoria || "Sem subcategoria";
+  return ({Groceries:"Mercado",Mercado:"Mercado","Eating out":"Restaurantes",Restaurante:"Restaurantes","Food delivery":"Delivery","Credit card payment":"Pagamento de fatura"})[category] || category;
+}
+function sheetTreeRows(periods, side, group, getRows, valueOf) {
+  const key=JSON.stringify([side,group]);
+  const opened=state.sheetExpanded.has(key);
+  const rowsByMonth=periods.map(p=>getRows(p.month));
+  const hasChildren=rowsByMonth.some(rows=>rows.length);
+  const toggle=(label,id,expanded,level)=>`<button type="button" class="sheet-tree-toggle level-${level}" data-action="sheet-expand" data-key="${esc(id)}" aria-expanded="${expanded}" aria-label="${expanded ? "Recolher" : "Expandir"} ${esc(label)}"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span>${esc(label)}</span></button>`;
+  const values=(rows,expandKey=null,expanded=false,label="")=>rows.map(items=>`<td class="right">${expandKey && items.length ? `<button type="button" class="statement-cell" data-action="sheet-expand" data-key="${esc(expandKey)}" aria-expanded="${expanded}" aria-label="${expanded ? "Recolher" : "Expandir"} ${esc(label)}">${sheetNumber(sum(items.map(valueOf)))}</button>` : sheetNumber(sum(items.map(valueOf)))}</td>`).join("");
+  let html=`<tr class="sheet-group"><th scope="row">${hasChildren ? toggle(group,key,opened,0) : esc(group)}</th>${values(rowsByMonth,hasChildren ? key : null,opened,group)}</tr>`;
+  if(!opened || !hasChildren) return html;
+  const categories=[...new Set(rowsByMonth.flatMap(rows=>rows.map(sheetSubcategory)))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
+  for(const category of categories) {
+    const subkey=JSON.stringify([side,group,category]);
+    const expanded=state.sheetExpanded.has(subkey);
+    const subrows=rowsByMonth.map(rows=>rows.filter(t=>sheetSubcategory(t)===category));
+    html+=`<tr class="sheet-subgroup"><th scope="row">${toggle(category,subkey,expanded,1)}</th>${values(subrows,subkey,expanded,category)}</tr>`;
+    if(!expanded) continue;
+    const transactions=[...new Map(subrows.flat().map(t=>[t.id,t])).values()].sort((a,b)=>a.date.localeCompare(b.date)||a.description.localeCompare(b.description));
+    for(const t of transactions) {
+      html+=`<tr class="sheet-leaf"><th scope="row"><span class="sheet-leaf-label" title="${esc(t.description)}">${dateName(t.date).slice(0,5)} · ${esc(t.description)}</span><button type="button" class="sheet-leaf-action" data-action="classify-transaction" data-id="${esc(t.id)}" aria-label="Revisar ${esc(t.description)}">Revisar</button></th>${subrows.map(rows=>`<td class="right">${rows.some(item=>item.id===t.id) ? sheetNumber(valueOf(t)) : '<span class="sheet-zero">—</span>'}</td>`).join("")}</tr>`;
+    }
+  }
+  return html;
+}
+function statementMatrix(source, id, detailed = true) {
+  if (!source.length) return empty("Sem meses disponíveis", "Os meses aparecerão depois da coleta bancária.");
+  const periods=source.map(sheetMetrics);
+  const head=`<thead><tr><th scope="col">Descrição</th>${periods.map(r=>`<th scope="col" class="right">${esc(sheetMonth(r.month))}${r.status === "partial" || r.status === "estimate" ? `<small>${r.status === "partial" ? "parcial" : "estimado"}</small>` : ""}</th>`).join("")}</tr></thead>`;
+  const total=(name,field,className="")=>`<tr class="${className}"><th scope="row">${esc(name)}</th>${periods.map(r=>`<td class="right ${field === "closing" && r[field]<0 ? "negative" : ""}">${sheetNumber(r[field])}</td>`).join("")}</tr>`;
+  const lines=side=>{
+    if(!detailed) return "";
+    const names=[...new Set(periods.flatMap(r=>(r[side]||[]).filter(e=>e.operational).map(e=>e.name)))];
+    const order=["Financiamento","Condomínio","Contas residenciais","Alimentação","Faturas dos cartões","Outras saídas a identificar"];
     names.sort((a,b)=>{
-      const rank = name => side === "incoming" ? name.startsWith("Salário") ? 0 : /Transferências|patrimoniais/.test(name) ? 2 : 1 : order.includes(name) ? order.indexOf(name) : /Transferências|patrimoniais/.test(name) ? 99 : 50;
+      const rank=name=>side === "incoming" ? name.startsWith("Salário") ? 0 : 1 : order.includes(name) ? order.indexOf(name) : 50;
       return rank(a)-rank(b)||a.localeCompare(b,"pt-BR");
     });
-    return names.map(name=>`<tr><th scope="row" class="statement-line-name">${esc(name)}</th>${periods.map(r=>{
-      const e=(r[side]||[]).find(item=>item.name===name);
-      return `<td class="right">${e?.transactions?.length ? `<button type="button" class="statement-cell" data-action="statement-evidence" data-month="${esc(r.month)}" data-side="${side}" data-name="${esc(name)}" aria-label="Ver ${esc(name)} em ${esc(monthName(r.month))}">${amount(e.amount)}</button>` : amount(e?.amount || 0)}</td>`;
-    }).join("")}</tr>`).join("");
+    return names.map(name=>sheetTreeRows(periods,side,name,
+      month=>(periods.find(p=>p.month===month)?.[side]||[]).find(e=>e.name===name && e.operational)?.transactions || [],
+      t=>t.amount)).join("");
   };
-  return `<div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="${id}" style="min-width:${200+periods.length*130}px"><caption>${detailed ? "Demonstrativo por mês. Selecione um valor para conferir seus lançamentos." : "Projeção mensal pela média móvel."}</caption>${head}<tbody>${total("Saldo inicial","opening","statement-total")}${total("Entradas","income","statement-section")}${lines("incoming")}${total("Saídas","spending","statement-section")}${lines("outgoing")}</tbody><tfoot>${total(detailed ? "Saldo final / até a coleta" : "Saldo final projetado","closing","statement-total")}</tfoot></table></div>`;
+  const financial=`<tr class="statement-financial"><th scope="row">Movimentações financeiras</th>${periods.map(r=>`<td class="right">${detailed && [...(r.incoming||[]),...(r.outgoing||[])].some(e=>!e.operational && e.transactions.length) ? `<button type="button" class="statement-cell" data-action="statement-evidence" data-month="${esc(r.month)}" data-side="financial" data-name="Movimentações financeiras" aria-label="Ver aplicações, resgates e transferências em ${esc(monthName(r.month))}">${sheetNumber(r.financial_net)}</button>` : sheetNumber(r.financial_net)}</td>`).join("")}</tr>`;
+  return `<div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="${id}" style="min-width:${240+periods.length*115}px"><caption>${detailed ? "Fluxo mensal" : "Projeção pela média móvel"} · valores em R$</caption>${head}<tbody>${total("Saldo inicial","opening","statement-total")}${total("Receitas","operating_income","statement-section")}${lines("incoming")}${total("Despesas","operating_spending","statement-section")}${lines("outgoing")}${total("Saldo após receitas e despesas","operating_balance","statement-subtotal")}${financial}</tbody><tfoot>${total(detailed ? "Saldo final em contas" : "Saldo final projetado","closing","statement-total")}</tfoot></table></div>`;
 }
 function reconciliationMatrix(report, periods) {
-  const reconciliation=report.reconciliation;
-  if(!reconciliation?.accounts?.length) return `<section class="panel">${empty("Conciliação por conta indisponível", "Os saldos individuais das contas precisam estar disponíveis na coleta.")}</section>`;
-  const labels={checked:"Fecha com a coleta",derived:"Saldo inicial reconstruído",difference:"Diferença a conferir"};
-  const fields=[["Saldo inicial","opening"],["Entradas","income"],["Saídas","spending"],["Saldo final / até a coleta","closing"]];
-  return `<section class="panel"><div class="panel-head"><div><h2>Conciliação das contas bancárias</h2><p>${reconciliation.status === "consistent" ? "Os valores por conta fecham com o demonstrativo e a coleta." : "Há diferenças ou informações insuficientes para conferir."}</p></div></div><div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="account-reconciliation" style="min-width:${200+periods.length*130}px"><caption>Saldo inicial + entradas − saídas = saldo final, para cada conta.</caption><thead><tr><th scope="col">Conta e movimentação</th>${periods.map(r=>`<th scope="col" class="right">${esc(monthName(r.month,true))}${r.status === "partial" ? '<small class="statement-status">Parcial</small>' : ""}</th>`).join("")}</tr></thead><tbody>${reconciliation.accounts.map(account=>`<tr class="statement-section"><th colspan="${periods.length+1}" scope="rowgroup">${esc(account.institution)} · ${esc(account.name)}<small class="statement-status">${labels[account.status]}${account.opening_difference ? " · diferença no saldo inicial: "+money(account.opening_difference) : ""}</small></th></tr>${fields.map(([name,field])=>`<tr class="${field === "closing" ? "statement-total" : ""}"><th scope="row" class="statement-line-name">${name}</th>${periods.map(r=>{const period=account.history.find(p=>p.month===r.month);return `<td class="right ${field === "closing" && period?.[field]<0 ? "negative" : ""}">${period ? amount(period[field]) : "—"}</td>`;}).join("")}</tr>`).join("")}`).join("")}</tbody><tfoot><tr class="statement-total"><th scope="row">Diferença: contas × demonstrativo</th>${periods.map(r=>{const differences=reconciliation.totals.find(t=>t.month===r.month)?.differences || {};const values=Object.values(differences);return `<td class="right ${values.some(v=>v!==0) ? "negative" : ""}">${values.some(v=>v!==0) ? Object.entries(differences).filter(([,v])=>v!==0).map(([k,v])=>`${esc({opening:"Inicial",income:"Entradas",spending:"Saídas",closing:"Final"}[k])}: ${money(v)}`).join("<br>") : amount(0)}</td>`;}).join("")}</tr></tfoot></table></div><p class="info-note">${esc(reconciliation.basis)}</p>${reconciliation.status === "difference" ? `<p class="info-note">${reconciliation.unmatched_transaction_ids.length} lançamentos sem conta identificada; ${reconciliation.duplicate_transaction_ids.length} identificadores duplicados; ${reconciliation.sign_conflict_ids.length} sinais inconsistentes. Diferença no total dos saldos da coleta: ${amount(reconciliation.snapshot_difference)}.</p>` : ""}</section>`;
+  const rec=report.reconciliation;
+  if(!rec?.accounts?.length) return empty("Conciliação indisponível", "Os saldos individuais das contas precisam estar disponíveis na coleta.");
+  const labels={checked:"Fecha com a coleta",derived:"Saldo reconstruído",difference:"Diferença a conferir"};
+  const fields=[["Saldo inicial","opening"],["Entradas bancárias","income"],["Saídas bancárias","spending"],["Saldo final","closing"]];
+  return `<div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="account-reconciliation" style="min-width:${240+periods.length*115}px"><caption>Conciliação por conta · todos os movimentos bancários · valores em R$</caption><thead><tr><th scope="col">Conta / movimentação</th>${periods.map(r=>`<th scope="col" class="right">${esc(sheetMonth(r.month))}${r.status === "partial" ? "<small>parcial</small>" : ""}</th>`).join("")}</tr></thead><tbody>${rec.accounts.map(a=>`<tr class="account-header"><th colspan="${periods.length+1}" scope="rowgroup">${esc(a.institution)} · ${esc(a.name)} <span>${labels[a.status]}${a.opening_difference ? " · diferença inicial: "+money(a.opening_difference) : ""}</span></th></tr>${fields.map(([name,field])=>`<tr class="${field === "closing" ? "statement-subtotal" : ""}"><th scope="row">${name}</th>${periods.map(r=>{const p=a.history.find(p=>p.month===r.month);return `<td class="right ${field === "closing" && p?.[field]<0 ? "negative" : ""}">${p ? sheetNumber(p[field]) : "—"}</td>`;}).join("")}</tr>`).join("")}`).join("")}</tbody><tfoot><tr class="statement-total"><th scope="row">Diferença com o demonstrativo</th>${periods.map(r=>{const diff=rec.totals.find(t=>t.month===r.month)?.differences||{};return `<td class="right">${Object.values(diff).some(v=>v!==0) ? Object.entries(diff).filter(([,v])=>v!==0).map(([key,value])=>`${esc({opening:"Inicial",income:"Entradas",spending:"Saídas",closing:"Final"}[key])}: ${sheetNumber(value)}`).join("<br>") : sheetNumber(0)}</td>`;}).join("")}</tr></tfoot></table></div><p class="sheet-note">${esc(rec.basis)}</p>${rec.status === "difference" ? `<p class="sheet-note">Diferenças: ${rec.unmatched_transaction_ids.length} lançamentos sem conta, ${rec.duplicate_transaction_ids.length} IDs duplicados e ${rec.sign_conflict_ids.length} sinais inconsistentes. Saldo da coleta: diferença de ${amount(rec.snapshot_difference)}.</p>` : ""}`;
+}
+function consumptionRows(month, group=null) {
+  return state.transactions.filter(t=>t.date.slice(0,7)===month && ["expense","refund"].includes(t.kind) && t.natureza!=="fatura" && t.categoria!=="Credit card payment" && (group===null || (t.group||"Outros")===group));
+}
+function consumptionMatrix(periods) {
+  const groups=[...new Set(periods.flatMap(p=>consumptionRows(p.month).map(t=>t.group||"Outros")))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
+
+  return `<div class="table-wrap statement-matrix-wrap"><table class="statement-matrix" id="consumption-statement" style="min-width:${240+periods.length*115}px"><caption>Consumo por categoria · banco e cartão · valores em R$</caption><thead><tr><th scope="col">Tipo de gasto</th>${periods.map(p=>`<th scope="col" class="right">${esc(sheetMonth(p.month))}</th>`).join("")}</tr></thead><tbody>${groups.map(group=>sheetTreeRows(periods,"consumption",group,month=>consumptionRows(month,group),expense)).join("")}</tbody><tfoot><tr class="statement-total"><th scope="row">Total do consumo</th>${periods.map(p=>`<td class="right">${sheetNumber(sum(consumptionRows(p.month).map(expense)))}</td>`).join("")}</tr></tfoot></table></div><p class="sheet-note">Data da compra, com estornos descontados. Pagamentos de fatura ficam fora deste quadro para não repetir as compras.</p>`;
 }
 function statementEvidence(report) {
   const selected=state.statementDetail;
   if(!selected) return "";
   const row=report.history.find(r=>r.month===selected.month);
-  const entry=row?.[selected.side]?.find(e=>e.name===selected.name);
+  let entry;
+  if(selected.side === "financial" && row) {
+    const transactions=[...(row.incoming||[]).filter(e=>!e.operational).flatMap(e=>e.transactions.map(t=>({...t,display_amount:t.amount,movement:e.name}))),...(row.outgoing||[]).filter(e=>!e.operational).flatMap(e=>e.transactions.map(t=>({...t,display_amount:-t.amount,movement:e.name})))];
+    entry={name:"Movimentações financeiras",amount:sheetMetrics(row).financial_net,transactions};
+  } else if(selected.side === "consumption") {
+    const transactions=consumptionRows(selected.month,selected.name).map(t=>({...t,display_amount:expense(t)}));
+    entry={name:selected.name,amount:sum(transactions.map(t=>t.display_amount)),transactions};
+  } else entry=row?.[selected.side]?.find(e=>e.name===selected.name);
   if(!entry) return "";
-  return `<section class="panel" id="statement-evidence"><div class="panel-head"><div><h2>${esc(entry.name)} · ${esc(monthName(selected.month))}</h2><p>${entry.transactions.length} lançamentos · total ${amount(entry.amount)}</p></div><button type="button" class="text-button" data-action="close-statement-evidence">Fechar detalhes</button></div>${entry.transactions.map(t=>`<div class="flow-transaction"><span>${dateName(t.date)} · ${esc(t.description)}<small class="statement-status">${esc(t.instituicao||"")} · ${esc(t.conta||"")}</small></span>${amount(t.amount)}<button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></div>`).join("")}</section>`;
+  return `<section id="statement-evidence" class="sheet-evidence"><div class="panel-head"><h2>${esc(entry.name)} · ${esc(monthName(selected.month))}</h2><button type="button" class="text-button" data-action="close-statement-evidence">Fechar detalhes</button></div><div class="table-wrap"><table class="evidence-table"><thead><tr><th>Data</th><th>Lançamento</th><th>Conta</th><th class="right">Valor (R$)</th><th>Ação</th></tr></thead><tbody>${entry.transactions.map(t=>`<tr><td>${dateName(t.date)}</td><td>${esc(t.description)}${t.movement ? `<small>${esc(t.movement)}</small>` : ""}</td><td>${esc(t.instituicao||"")} · ${esc(t.conta||"")}</td><td class="right">${sheetNumber(t.display_amount ?? t.amount)}</td><td><button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></td></tr>`).join("")}</tbody><tfoot><tr><th colspan="3">Total</th><td class="right">${sheetNumber(entry.amount)}</td><td></td></tr></tfoot></table></div></section>`;
 }
 function cashflow() {
-  const switcher = `<button type="button" class="text-button" data-action="toggle-flow">${state.flowMode === "monthly" ? "Ver planejamento por ciclo" : "Voltar ao demonstrativo mensal"}</button>`;
-  if (state.flowMode === "cycle") return switcher + cycleCashflow();
-  const report = state.data.statement;
-  if (!report) return pageHead("Fluxo de caixa", "Demonstrativo mensal") + empty("Demonstrativo indisponível", "O backend precisa estar atualizado para calcular os saldos e a média móvel.");
-  const sample = report.sample_months.map(m => monthName(m, true)).join(", ");
-  const controls = `<label class="statement-window">Média móvel<select id="forecast-window" ${state.statementLoading ? "disabled" : ""}>${options([[3,"3 meses"],[6,"6 meses"],[12,"12 meses"]],state.forecastWindow)}</select></label>${switcher}`;
-  const headline = pageHead("Fluxo de caixa", "Saldo inicial → entradas → saídas → saldo final", controls);
+  const switcher=`<button type="button" class="text-button" data-action="toggle-flow">${state.flowMode === "monthly" ? "Planejamento por ciclo" : "Voltar ao fluxo mensal"}</button>`;
+  if(state.flowMode === "cycle") return switcher+cycleCashflow();
+  const report=state.data.statement;
+  if(!report) return pageHead("Fluxo de caixa","Demonstrativo mensal")+empty("Demonstrativo indisponível","Os dados precisam estar disponíveis no backend.");
   const periods=report.history.filter(r=>r.month<=state.month).slice(-6);
-  const detail=`<section class="panel statement-panel"><div class="panel-head"><div><h2>Demonstrativo dos últimos meses</h2><p>Entradas e saídas por tipo · meses lado a lado</p></div></div>${statementMatrix(periods,"monthly-statement")}<p class="info-note">Saldo inicial + entradas − saídas = saldo final. ${esc(report.balance_source)} O mês parcial mostra o saldo até a coleta. Compras no cartão saem do caixa no pagamento da fatura.</p></section>${statementEvidence(report)}${reconciliationMatrix(report,periods)}`;
-  const projected=report.forecast.length ? statementMatrix(report.forecast,"statement-projection",false) : empty("Ainda não há mês completo para a média", "A projeção aparecerá quando houver histórico de um mês completo.");
-  const spending = state.transactions.filter(t => t.date.slice(0,7) === state.month && ["expense","refund"].includes(t.kind));
-  const groups = new Map();
-  for (const t of spending) {
-    const name=t.group || "Outros";
-    if(!groups.has(name)) groups.set(name, {total:0, rows:[]});
-    groups.get(name).rows.push(t);
-    groups.get(name).total += expense(t);
+  const tabs=[["monthly","Fluxo mensal"],["consumption","Gastos por categoria"],["accounts","Conciliação por conta"],["forecast","Projeção"]];
+  const selected=state.sheetView||"monthly";
+  const controls=`${selected === "forecast" ? `<label class="statement-window">Média móvel<select id="forecast-window" ${state.statementLoading ? "disabled" : ""}>${options([[3,"3 meses"],[6,"6 meses"],[12,"12 meses"]],state.forecastWindow)}</select></label>` : ""}${switcher}`;
+  let table,note;
+  if(selected === "accounts") {
+    table=reconciliationMatrix(report,periods);
+    note="A conciliação inclui aplicações, resgates e transferências que movimentam as contas.";
+  } else if(selected === "consumption") {
+    table=consumptionMatrix(periods);
+    note="Gastos pela data da compra. Abra uma categoria para ver subgrupos e lançamentos.";
+  } else if(selected === "forecast") {
+    const forecasts=report.forecast.map(r=>{
+      if(r.operating_income!==undefined) return r;
+      const actual=report.history.find(h=>h.month===r.month);
+      const base=actual ? sheetMetrics(actual) : null;
+      return {...r,operating_income:base ? sum([r.income,-actual.income,base.operating_income]) : r.income,operating_spending:base ? sum([r.spending,-actual.spending,base.operating_spending]) : r.spending,financial_net:base?.financial_net||0};
+    });
+    table=forecasts.length ? statementMatrix(forecasts,"statement-projection",false) : empty("Sem histórico completo para projetar","A projeção aparecerá depois de um mês completo.");
+    note=`Média de ${report.sample_count} meses completos: ${report.sample_months.map(m=>sheetMonth(m)).join(", ")}. Aplicações, resgates e transferências futuras não são presumidos. O mês atual combina realizado com o restante até atingir a média.`;
+  } else {
+    table=statementMatrix(periods,"monthly-statement");
+    note="Saldo final = saldo inicial + receitas − despesas + movimentações financeiras. Saldo investido é patrimônio; não é despesa nem saída deste demonstrativo.";
   }
-  const consumption = `<section class="panel"><div class="panel-head"><div><h2>Tipos de gasto em ${esc(monthName(state.month))}</h2><p>Consumo pela data da compra · banco e cartão · estornos descontados</p></div></div>${groups.size ? `<table class="statement-detail"><thead><tr><th>Categoria e lançamentos</th><th class="right">Gasto líquido</th></tr></thead><tbody>${[...groups.entries()].sort((a,b)=>b[1].total-a[1].total).map(([name,g])=>`<tr><td><details><summary>${esc(name)} <small>${g.rows.length} lançamentos</small></summary>${g.rows.map(t=>`<div class="flow-transaction"><span>${esc(t.category)} · ${esc(t.description)}</span>${amount(expense(t))}</div>`).join("")}</details></td><td class="right">${amount(sum(g.rows.map(expense)))}</td></tr>`).join("")}</tbody><tfoot><tr><th>Total do consumo</th><td class="right">${amount(sum(spending.map(expense)))}</td></tr></tfoot></table>` : empty("Sem consumo identificado neste mês", "Compras e estornos aparecem aqui quando importados ou registrados.")}<p class="info-note">Alimentação e outros gastos no cartão aparecem aqui. No demonstrativo de caixa, a saída ocorre no pagamento da fatura; estes valores não são somados novamente ao caixa.</p></section>`;
-  return headline + `<p class="info-note">Saldo bancário na coleta de ${dateName(report.as_of)}: ${amount(report.snapshot_balance)}. Abra as linhas para conferir os lançamentos.</p>` + detail + consumption + `<section class="panel"><div class="panel-head"><div><h2>Próximos ${report.horizon} meses</h2><p>Média móvel de ${report.sample_count} mês${report.sample_count === 1 ? "" : "es"} completo${report.sample_count === 1 ? "" : "s"}${sample ? " · " + esc(sample) : ""}</p></div></div>${state.statementLoading ? '<p role="status">Atualizando a média móvel…</p>' : projected}<p class="info-note">O mês atual combina o realizado com o que falta para atingir a média. Cada saldo final financia o mês seguinte. A projeção mantém a média de receitas e pagamentos; não presume novos resgates, aplicações ou transferências próprias. Não inclui reajustes, despesas futuras cadastradas ou calendário de vencimentos. ${report.sample_count < report.window ? "Há menos meses completos do que a janela escolhida." : ""}</p><details><summary>Ver médias por tipo de entrada e saída</summary><div class="statement-averages"><div><h3>Entradas por mês</h3>${report.average_incoming.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div><div><h3>Saídas por mês</h3>${report.average_outgoing.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div></div></details></section>`;
+  return `<div class="cashflow-sheet">${pageHead("Fluxo de caixa","Meses em colunas · valores em R$",controls)}<nav class="sheet-tabs" aria-label="Visões do fluxo de caixa">${tabs.map(([key,label])=>`<button type="button" data-action="sheet-view" data-view="${key}" aria-pressed="${selected===key}">${label}</button>`).join("")}</nav><div class="sheet-meta"><span>Coleta: ${dateName(report.as_of)} · saldo em contas: ${amount(report.snapshot_balance)}</span><span>${report.reconciliation?.status === "consistent" ? "Saldos fecham com a coleta" : "Conciliação a conferir"}</span></div>${state.statementLoading ? '<p role="status">Atualizando a média…</p>' : table}<p class="sheet-note">${esc(note)}</p>${selected === "monthly" ? '<p class="sheet-note">Os saldos anteriores são reconstruídos pelos movimentos disponíveis. Abra uma categoria para ver subgrupos e lançamentos.</p>' : ""}${statementEvidence(report)}</div>`;
 }
+
 function cycleCashflow() {
   const f=currentCashflow();
   const funding={pool:"Fundo conjunto",aleph:"Salário Aleph",bianca:"Salário Bianca"};
@@ -929,6 +990,24 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
+  if (action === "sheet-expand") {
+    const key=button.dataset.key;
+    if(state.sheetExpanded.has(key)) state.sheetExpanded.delete(key);
+    else state.sheetExpanded.add(key);
+    const scroll=document.querySelector(".statement-matrix-wrap")?.scrollLeft || 0;
+    render();
+    const wrap=document.querySelector(".statement-matrix-wrap");
+    if(wrap) wrap.scrollLeft=scroll;
+    const target=[...document.querySelectorAll(".sheet-tree-toggle")].find(el=>el.dataset.key===key);
+    target?.focus({preventScroll:true});
+    return;
+  }
+  if (action === "sheet-view") {
+    state.sheetView=button.dataset.view;
+    state.statementDetail=null;
+    render();
+    return;
+  }
   if (action === "statement-evidence") {
     state.statementDetail={month:button.dataset.month,side:button.dataset.side,name:button.dataset.name};
     render();

@@ -25,7 +25,9 @@ def bucket(t, incoming):
     if t.get('kind') == 'other':
         if t.get('natureza') == 'interna' or t.get('externa'):
             return 'Transferências recebidas (não receitas)' if incoming else 'Transferências enviadas (não despesas)'
-        return 'Resgates e outras entradas patrimoniais' if incoming else 'Aplicações e outras saídas patrimoniais'
+        if t.get('natureza') in ('investimento', 'resgate', 'aplicacao') or t.get('categoria') in ('Investments', 'Investment'):
+            return 'Resgates de investimentos' if incoming else 'Aplicações em investimentos'
+        return 'Outras movimentações a conferir'
     if incoming:
         if t.get('is_salary') or t.get('salary_person') or t.get('income_category') == 'Salário' or t.get('metodo') == 'Salário' or t.get('categoria') == 'Salary':
             person = {'aleph': 'Aleph', 'bianca': 'Bianca'}.get(t.get('salary_person'), 'titular a identificar')
@@ -107,6 +109,24 @@ def reconcile(finance, transactions, history):
             'basis': 'Conferência dos saldos da coleta, sinais e soma dos movimentos por conta. Saldos mensais reconstruídos; o saldo inicial da coleta também é derivado, não um extrato histórico independente.'}
 
 
+def breakdown(row):
+    """Holdings never enter this ledger; only bank movements affect cash."""
+    operating_in = [e for e in row['incoming'] if e['operational']]
+    operating_out = [e for e in row['outgoing'] if e['operational']]
+    financial_in = [e for e in row['incoming'] if not e['operational']]
+    financial_out = [e for e in row['outgoing'] if not e['operational']]
+    income = sum(cents(e['amount']) for e in operating_in)
+    spending = sum(cents(e['amount']) for e in operating_out)
+    capital_in = sum(cents(e['amount']) for e in financial_in)
+    capital_out = sum(cents(e['amount']) for e in financial_out)
+    row.update(operating_income=income / 100, operating_spending=spending / 100,
+               operating_balance=(cents(row['opening']) + income - spending) / 100,
+               financial_income=capital_in / 100, financial_spending=capital_out / 100,
+               financial_net=(capital_in - capital_out) / 100,
+               financial_incoming=financial_in, financial_outgoing=financial_out)
+    return row
+
+
 def build(data, window=3, horizon=6):
     finance = data['finance']
     as_of = finance['gerado_em'][:10]
@@ -150,7 +170,7 @@ def build(data, window=3, horizon=6):
                        'opening': opening / 100, 'income': income / 100, 'spending': spending / 100, 'closing': closing / 100,
                        'incoming': entries(incoming), 'outgoing': entries(outgoing)})
         closing = opening
-    history = list(reversed(result))
+    history = [breakdown(row) for row in reversed(result)]
     # Take consecutive full calendar months; an observed zero is part of the mean.
     eligible = [r for r in history if r['status'] == 'historical'][-window:]
     averages = {'incoming': defaultdict(int), 'outgoing': defaultdict(int)}
@@ -172,10 +192,14 @@ def build(data, window=3, horizon=6):
         remaining_spending = max(0, average_spending - observed_spending)
         closing = cents(actual['closing']) + remaining_income - remaining_spending
         forecast.append({'month': current, 'status': 'estimate', 'opening': actual['opening'], 'income': (cents(actual['income']) + remaining_income) / 100, 'spending': (cents(actual['spending']) + remaining_spending) / 100, 'closing': closing / 100})
+        forecast[-1].update(operating_income=(observed_income + remaining_income) / 100,
+                            operating_spending=(observed_spending + remaining_spending) / 100,
+                            financial_net=actual['financial_net'])
         for offset in range(1, horizon + 1):
             opening = closing
             closing += average_income - average_spending
-            forecast.append({'month': month_add(current, offset), 'status': 'forecast', 'opening': opening / 100, 'income': average_income / 100, 'spending': average_spending / 100, 'closing': closing / 100})
+            forecast.append({'month': month_add(current, offset), 'status': 'forecast', 'opening': opening / 100, 'income': average_income / 100, 'spending': average_spending / 100, 'closing': closing / 100,
+                             'operating_income': average_income / 100, 'operating_spending': average_spending / 100, 'financial_net': 0})
     return {'as_of': as_of, 'snapshot_balance': finance['resumo']['caixa'], 'history': history, 'forecast': forecast,
             'window': window, 'sample_months': [r['month'] for r in eligible], 'sample_count': count, 'horizon': horizon,
             'average_income': average_income / 100 if count else None, 'average_spending': average_spending / 100 if count else None,
