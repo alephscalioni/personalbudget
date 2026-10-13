@@ -19,6 +19,8 @@ os.environ.setdefault('PERSONALBUDGET_REPORTS', str(data / 'reports'))
 os.environ.setdefault('PERSONALBUDGET_DATABASE', str(data / 'budget.sqlite3'))
 os.environ.setdefault('PERSONALBUDGET_FINANCE_CONFIG', str(data / 'config'))
 os.environ.setdefault('PERSONALBUDGET_AUTH_REQUIRED', '1')
+# Rule-first classification; the authenticated Kaleu worker handles only pending cases.
+os.environ.setdefault('PERSONALBUDGET_CLASSIFICATION_AI_ENABLED', '1')
 sys.path.insert(0, str(root))
 from backend import auth, store
 if not auth.configured():

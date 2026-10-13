@@ -30,7 +30,7 @@ import {
 
 const pages = {
   overview: "Visão geral",
-  cashflow: "Fluxo por ciclo",
+  cashflow: "Fluxo de caixa",
   transactions: "Transações",
   budget: "Orçamento",
   accounts: "Contas e cartões",
@@ -63,6 +63,9 @@ const state = {
   includeDeclared: true,
   filtersOpen: false,
   reviewPrompted: false,
+  forecastWindow: 3,
+  statementLoading: false,
+  flowMode: "monthly",
   kaleuMessages: [],
 };
 const content = document.querySelector("#content");
@@ -109,7 +112,7 @@ function options(items, selected) {
   return items
     .map(
       ([value, label]) =>
-        `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`,
+        `<option value="${esc(value)}" ${String(value) === String(selected) ? "selected" : ""}>${esc(label)}</option>`,
     )
     .join("");
 }
@@ -117,6 +120,7 @@ function pageHead(title, description, action = "", withMonth = true) {
   const months = [
     ...new Set([
       state.data.finance.gerado_em.slice(0, 7),
+      ...(state.page === "cashflow" ? (state.data.statement?.forecast || []).map(r => r.month) : []),
       ...state.transactions.flatMap((t) => [t.date.slice(0, 7), competenceMonth(t, state.data.budget), cycleMonth(t, state.data.budget)]),
     ]),
   ]
@@ -251,7 +255,42 @@ function salariesPanel() {
 function currentCashflow(month = state.month) {
   return cashflowSummary(state.transactions,month,state.data.budget,(state.data.cashflow_plans || []).find(p=>p.month===month),state.data.salary_plan);
 }
+function statementEntries(entries, sign) {
+  return entries.map(e => `<tr><td><details><summary>${esc(e.name)} <small>${e.transactions.length} lançamentos${e.operational ? "" : " · movimentação patrimonial"}</small></summary><div class="statement-transactions">${e.transactions.map(t => `<div class="flow-transaction"><span>${dateName(t.date)} · ${esc(t.description)}</span>${amount(t.amount)}<button type="button" class="text-button" data-action="classify-transaction" data-id="${esc(t.id)}">Revisar</button></div>`).join("")}</div></details></td><td class="right">${sign} ${amount(e.amount)}</td></tr>`).join("");
+}
 function cashflow() {
+  const switcher = `<button type="button" class="text-button" data-action="toggle-flow">${state.flowMode === "monthly" ? "Ver planejamento por ciclo" : "Voltar ao demonstrativo mensal"}</button>`;
+  if (state.flowMode === "cycle") return switcher + cycleCashflow();
+  const report = state.data.statement;
+  if (!report) return pageHead("Fluxo de caixa", "Demonstrativo mensal") + empty("Demonstrativo indisponível", "O backend precisa estar atualizado para calcular os saldos e a média móvel.");
+  const actual = report.history.find(r => r.month === state.month);
+  const forecast = report.forecast.find(r => r.month === state.month);
+  const row = actual || forecast;
+  const sample = report.sample_months.map(m => monthName(m, true)).join(", ");
+  const controls = `<label class="statement-window">Média móvel<select id="forecast-window" ${state.statementLoading ? "disabled" : ""}>${options([[3,"3 meses"],[6,"6 meses"],[12,"12 meses"]],state.forecastWindow)}</select></label>${switcher}`;
+  const headline = pageHead("Fluxo de caixa", "Saldo inicial → entradas → saídas → saldo final", controls);
+  const historyRows = report.history.slice(-6).map(r => `<tr><td>${esc(monthName(r.month))}<small class="statement-status">${r.status === "partial" ? "Parcial" : "Histórico"}</small></td><td class="right">${amount(r.opening)}</td><td class="right">${amount(r.income)}</td><td class="right">${amount(r.spending)}</td><td class="right ${r.closing < 0 ? "negative" : ""}">${amount(r.closing)}</td></tr>`).join("");
+  const tableHead = `<tr><th>Mês</th><th class="right">Saldo inicial</th><th class="right">Entradas</th><th class="right">Saídas</th><th class="right">Saldo final</th></tr>`;
+  const projected = report.forecast.length ? `<div class="table-wrap"><table class="statement-history"><thead>${tableHead}</thead><tbody>${report.forecast.map(r => `<tr><td>${esc(monthName(r.month))}<small class="statement-status">${r.status === "estimate" ? "Estimativa de fechamento" : "Projeção"}</small></td><td class="right">${amount(r.opening)}</td><td class="right">${amount(r.income)}</td><td class="right">${amount(r.spending)}</td><td class="right ${r.closing < 0 ? "negative" : ""}">${amount(r.closing)}</td></tr>`).join("")}</tbody></table></div>` : empty("Ainda não há mês completo para a média", "Assim que houver histórico de um mês completo, a projeção aparecerá aqui.");
+  let detail = empty("Sem demonstrativo para este mês", "Selecione um mês do histórico ou da projeção.");
+  if (row) {
+    const estimated = !actual;
+    const incoming = actual ? statementEntries(actual.incoming, "+") : report.average_incoming.map(e=>`<tr><td>${esc(e.name)} <small>· média móvel</small></td><td class="right">+ ${amount(e.amount)}</td></tr>`).join("");
+    const outgoing = actual ? statementEntries(actual.outgoing, "−") : report.average_outgoing.map(e=>`<tr><td>${esc(e.name)} <small>· média móvel</small></td><td class="right">− ${amount(e.amount)}</td></tr>`).join("");
+    detail = `<section class="panel statement-panel"><div class="panel-head"><div><h2>${esc(monthName(state.month))}</h2><p>${estimated ? "Valores projetados pela média móvel" : actual.status === "partial" ? "Movimentos disponíveis · mês parcial" : "Movimentos disponíveis · mês encerrado"}</p></div><span class="pill">${estimated ? "Projetado" : "Histórico"}</span></div><table class="statement-detail"><thead><tr><th>Movimentação</th><th class="right">Valor</th></tr></thead><tbody><tr class="statement-total"><th>Saldo inicial</th><td class="right">${amount(row.opening)}</td></tr><tr class="statement-section"><th>Entradas</th><td class="right">+ ${amount(row.income)}</td></tr>${incoming || '<tr><td colspan="2">Nenhuma entrada identificada.</td></tr>'}<tr class="statement-section"><th>Saídas</th><td class="right">− ${amount(row.spending)}</td></tr>${outgoing || '<tr><td colspan="2">Nenhuma saída identificada.</td></tr>'}</tbody><tfoot><tr class="statement-total"><th>${actual?.status === "partial" ? "Saldo até a coleta" : "Saldo final"}</th><td class="right ${row.closing < 0 ? "negative" : ""}">${amount(row.closing)}</td></tr></tfoot></table><p class="info-note">Saldo inicial + entradas − saídas = saldo final. ${esc(report.balance_source)} Lançamentos manuais e investimentos declarados não alteram este saldo bancário.</p></section>`;
+  }
+  const spending = state.transactions.filter(t => t.date.slice(0,7) === state.month && ["expense","refund"].includes(t.kind));
+  const groups = new Map();
+  for (const t of spending) {
+    const name=t.group || "Outros";
+    if(!groups.has(name)) groups.set(name, {total:0, rows:[]});
+    groups.get(name).rows.push(t);
+    groups.get(name).total += expense(t);
+  }
+  const consumption = `<section class="panel"><div class="panel-head"><div><h2>Tipos de gasto em ${esc(monthName(state.month))}</h2><p>Consumo pela data da compra · banco e cartão · estornos descontados</p></div></div>${groups.size ? `<table class="statement-detail"><thead><tr><th>Categoria e lançamentos</th><th class="right">Gasto líquido</th></tr></thead><tbody>${[...groups.entries()].sort((a,b)=>b[1].total-a[1].total).map(([name,g])=>`<tr><td><details><summary>${esc(name)} <small>${g.rows.length} lançamentos</small></summary>${g.rows.map(t=>`<div class="flow-transaction"><span>${esc(t.category)} · ${esc(t.description)}</span>${amount(expense(t))}</div>`).join("")}</details></td><td class="right">${amount(sum(g.rows.map(expense)))}</td></tr>`).join("")}</tbody><tfoot><tr><th>Total do consumo</th><td class="right">${amount(sum(spending.map(expense)))}</td></tr></tfoot></table>` : empty("Sem consumo identificado neste mês", "Compras e estornos aparecem aqui quando importados ou registrados.")}<p class="info-note">Alimentação e outros gastos no cartão aparecem aqui. No demonstrativo de caixa, a saída ocorre no pagamento da fatura; estes valores não são somados novamente ao caixa.</p></section>`;
+  return headline + `<p class="info-note">Saldo bancário na coleta de ${dateName(report.as_of)}: ${amount(report.snapshot_balance)}. Abra as linhas para conferir os lançamentos.</p>` + detail + consumption + `<section class="panel"><div class="panel-head"><div><h2>Próximos ${report.horizon} meses</h2><p>Média móvel de ${report.sample_count} mês${report.sample_count === 1 ? "" : "es"} completo${report.sample_count === 1 ? "" : "s"}${sample ? " · " + esc(sample) : ""}</p></div></div>${state.statementLoading ? '<p role="status">Atualizando a média móvel…</p>' : projected}<p class="info-note">O mês atual combina o realizado com o que falta para atingir a média. Cada saldo final financia o mês seguinte. A projeção mantém a média de receitas e pagamentos; não presume novos resgates, aplicações ou transferências próprias. Não inclui reajustes, despesas futuras cadastradas ou calendário de vencimentos. ${report.sample_count < report.window ? "Há menos meses completos do que a janela escolhida." : ""}</p><details><summary>Ver médias por tipo de entrada e saída</summary><div class="statement-averages"><div><h3>Entradas por mês</h3>${report.average_incoming.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div><div><h3>Saídas por mês</h3>${report.average_outgoing.map(e=>`<p>${esc(e.name)} ${amount(e.amount)}</p>`).join("") || '<p>Sem histórico suficiente.</p>'}</div></div></details></section><section class="panel"><div class="panel-head"><h2>Últimos meses</h2></div><div class="table-wrap"><table class="statement-history"><thead>${tableHead}</thead><tbody>${historyRows}</tbody></table></div></section>`;
+}
+function cycleCashflow() {
   const f=currentCashflow();
   const funding={pool:"Fundo conjunto",aleph:"Salário Aleph",bianca:"Salário Bianca"};
   const sources=(state.data.salary_plan||[]).map(p=>{
@@ -279,7 +318,7 @@ function cashflowForm() {
 }
 function pendingReviews() {
   return state.transactions.filter(t => !t.manual && !t.reviewed &&
-    ((t.salary_candidate && !t.salary_person) || (["expense", "refund"].includes(t.kind) && ["Outros", "Transferências", "Sem categoria"].includes(t.group)) ||
+    ((t.classification?.needs_review) || (t.salary_candidate && !t.salary_person) || (["expense", "refund"].includes(t.kind) && ["Outros", "Transferências", "Sem categoria"].includes(t.group)) ||
      (t.kind === "income" && (t.is_salary || t.metodo === "Salário") && !t.salary_person))).sort((a,b)=>Number(Boolean(b.salary_candidate))-Number(Boolean(a.salary_candidate)));
 }
 function syncLabel() {
@@ -483,6 +522,16 @@ function render() {
   }
 }
 function bindFilters() {
+  document.querySelector("#forecast-window")?.addEventListener("change", async event => {
+    const window = Number(event.target.value);
+    state.statementLoading = true;
+    render();
+    try {
+      state.data.statement = await api(`statement?window=${window}&horizon=6`);
+      state.forecastWindow = window;
+    } catch (error) { toast(error.message); }
+    finally { state.statementLoading = false; render(); }
+  });
   document.querySelector("#include-declared")?.addEventListener("change", event => {
     state.includeDeclared = event.target.checked;
     render();
@@ -537,9 +586,9 @@ async function load() {
   }
   document.querySelector("#refresh").hidden = false;
   const data = await api("data");
-  const { classifyPayload } = await import("./classifier.js");
+  const { classifyPayload } = data.transactions ? {} : await import("./classifier.js");
   state.data = data;
-  state.transactions = [
+  state.transactions = (data.transactions || [
     ...classifyPayload(data.finance),
     ...data.manual.map((t) => ({
       ...t,
@@ -549,10 +598,10 @@ async function load() {
       conta_tipo: "MANUAL",
       category: t.group,
     })),
-  ]
+  ])
     .map((t) => {
       const override = data.overrides?.find((o) => o.id === t.id);
-      if (override) {
+      if (override && !data.transactions) {
         t = {
           ...t,
           ...Object.fromEntries(
@@ -711,7 +760,7 @@ function classificationForm(id) {
   openModal(
     "Categorizar lançamento",
     t.salary_candidate ? `Possível salário de ${t.salary_candidate === "aleph" ? "Aleph" : "Bianca"}. Confirme a origem antes de salvar.` : "A data e o valor bancários são preservados.",
-    `<form><p class="info-note">${esc(t.description)} · ${dateName(t.date)} · ${amount(t.amount)}</p><div class="form-grid"><label class="full">Categoria<select name="group">${options([...new Set([...state.transactions.map(t => t.group), ...state.data.budget.lines.flatMap(l => l.grupos), "Salário", "Outros"])].sort().map(g => [g,g]),t.group)}</select></label><label>Tratamento<select name="kind">${options(
+    `<form><p class="info-note">${esc(t.description)} · ${dateName(t.date)} · ${amount(t.amount)}</p><div class="form-grid"><label class="full">Categoria<select name="group">${options([...new Set([...state.transactions.map(t => t.group), ...state.data.budget.lines.flatMap(l => l.grupos), ...(state.data.classification?.catalog?.income || []), "Salário", "Outros"])].sort().map(g => [g,g]),t.group)}</select></label><label>Tratamento<select name="kind">${options(
       [
         ["income", "Receita"],
         ["expense", "Despesa"],
@@ -855,6 +904,11 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
+  if (action === "toggle-flow") {
+    state.flowMode = state.flowMode === "monthly" ? "cycle" : "monthly";
+    render();
+    return;
+  }
   if (action === "logout") {
     await api("session", "DELETE");
     renderLogin();

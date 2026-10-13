@@ -94,6 +94,13 @@ def _doc(pagamento: dict, lado: str):
     return d.get("value")
 
 
+def payer_document_root(transaction):
+    """Preserve the company identity even when bank descriptions are abbreviated."""
+    document = (((transaction.get('paymentData') or {}).get('payer') or {}).get('documentNumber') or {})
+    digits = re.sub(r'\D', '', document.get('value') or '')
+    return digits[:8] if document.get('type') == 'CNPJ' and len(digits) == 14 else None
+
+
 def num_conta(s: str) -> str:
     """'00416215-3' -> '4162153'. O extrato de TED cita a conta destino sem os
     zeros a esquerda e sem hifen ("TED BCO 260 AGE 1 CTA 4162153"), entao a
@@ -363,6 +370,7 @@ def coletar(dias: int, fonte: str = "api", strict: bool = False):
                 v = tx_amount(t)
                 conta["lancamentos"].append({
                     "provider_id": t.get("id"),
+                    "payer_document_root": payer_document_root(t),
                     "data": t["date"][:10], "desc": t.get("description"),
                     "categoria": t.get("category"), "tipo": t.get("type"),
                     "valor": v, "moeda": t.get("currencyCode"),

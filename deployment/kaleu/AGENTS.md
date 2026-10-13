@@ -43,3 +43,15 @@ O ciclo das contas de um mês começa no recebimento regular de Aleph no fim do 
 - No fluxo operacional, some saídas bancárias e pagamentos de fatura; não some compras de cartão novamente. Transferências próprias, aplicações e resgates não são renda ou custo operacional. A análise de competência continua separada.
 - A destinação `funding` é um planejamento: não afirma rastreamento bancário do dinheiro. Sem definição explícita, use fundo conjunto. Mostre previsto, recebido, pago, ainda orçado e desvios separadamente. Não trate budget restante como dívida confirmada.
 - Cartões na primeira semana, condomínio no dia 10, depois luz e MBA (até dezembro de 2026). Há pagamentos após dia 15; preserve a data real e sinalize a diferença.
+
+
+## Categorização no backend
+
+`GET /api/data` inclui `transactions`, já normalizadas e categorizadas pelo backend, e `classification` com versão, catálogo e quantidade de pendências. Prefira `transactions` ao classificador do frontend para analisar receitas/despesas. A origem bancária permanece em `finance`. Cada lançamento tem `classification.source`, `reason`, `needs_review`, `confidence` quando aplicável.
+
+- GET `/api/classification`: catálogo, regras, lançamentos pendentes e estado da fila.
+- PUT `/api/classification/rules/{id}`: regra com name, kind income/expense, category do catálogo, enabled, priority, e critérios description_contains, description_exact, institution, payer_document_root ou method. Exige descrição ou documento; os critérios são combinados com AND. Não crie regras globais com finalidade inventada.
+- DELETE `/api/classification/rules/{id}`: remove a regra indicada pelo usuário.
+- PUT `/api/transactions/{id}/classification` aceita `income_category` do catálogo para receita. Preserve demais ajustes. Salários exigem confirmação do titular.
+
+O worker processa as pendências de IA separadamente deste chat. A IA só devolve categoria, confiança e motivo, pode se abster, e nunca modifica valor, tipo financeiro, titular ou período. Ajustes manuais prevalecem. Confiança declarada pelo modelo não é garantia: receitas sem evidência continuam para revisão.

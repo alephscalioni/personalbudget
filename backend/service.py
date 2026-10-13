@@ -69,8 +69,10 @@ def matches_salary_rule(transaction, rule):
         return False
     root = rule.get('payer_root', '')
     if root:
-        return (len(root) == 8 and root.isdigit()
-                and re.sub(r'\D', '', transaction.get('desc', '')).startswith(root))
+        if len(root) != 8 or not root.isdigit():
+            return False
+        structured = transaction.get('payer_document_root')
+        return structured == root if structured else re.sub(r'\D', '', transaction.get('desc', '')).startswith(root)
     # Never infer ownership from an amount, date, or a generic transfer method.
     if not rule.get('institution') or rule.get('institution') != transaction.get('instituicao'):
         return False
@@ -152,8 +154,15 @@ def data():
             if len(root)==8 and re.sub(r'\D','',t.get('desc','')).startswith(root[:5]):
                 t['salary_candidate']=rule['person']
     budgets = store.all_of('budget')
-    return {'source': record['source'], 'sync': store.get('setting', 'bank-sync') or {}, 'storage': 'postgresql' if store.DATABASE_URL else 'sqlite', 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
-            'salary_plan': salary_plan(), 'cashflow_plans': store.all_of('cashflow'), 'positions': declared, 'goals': store.all_of('goal'), 'manual': store.all_of('transaction'), 'overrides': store.all_of('override')}
+    from . import classification, classification_api
+    manual = store.all_of('transaction')
+    transactions, pending = classification.classify(payload, manual, overrides)
+    classification_api.enqueue(pending)
+    result = {'transactions': transactions, 'classification': {'version': classification.VERSION, 'catalog': classification.catalog(), 'ai_enabled': classification.ai_enabled(), 'pending': len(pending)}, 'source': record['source'], 'sync': store.get('setting', 'bank-sync') or {}, 'storage': 'postgresql' if store.DATABASE_URL else 'sqlite', 'finance': payload, 'budget': budgets[0] if budgets else default_budget(),
+            'salary_plan': salary_plan(), 'cashflow_plans': store.all_of('cashflow'), 'positions': declared, 'goals': store.all_of('goal'), 'manual': manual, 'overrides': overrides}
+    from .statement import build as statement_build
+    result['statement'] = statement_build(result)
+    return result
 
 
 def classifier_module():

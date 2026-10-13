@@ -2,6 +2,8 @@ from datetime import date
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+IncomeCategory = Literal['Salário', 'Trabalho extra', 'Reembolsos', 'Rendimentos', 'Cashback', 'Aluguéis', 'Vendas', 'Outras receitas', 'Receitas a revisar']
+
 
 class Model(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True, allow_inf_nan=False)
@@ -15,6 +17,7 @@ class Goal(Model):
 
 
 class Transaction(Model):
+    income_category: IncomeCategory | None = None
     salary_person: Literal['aleph', 'bianca'] | None = None
     description: str = Field(min_length=1, max_length=180)
     amount: float = Field(gt=0, le=1e10, multiple_of=0.01)
@@ -27,6 +30,7 @@ class Transaction(Model):
 
 
 class TransactionOverride(Model):
+    income_category: IncomeCategory | None = None
     cashflow_line: str | None = Field(default=None, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
     group: str | None = Field(default=None, min_length=1, max_length=80)
     reviewed: bool = False

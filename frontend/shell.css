@@ -1762,3 +1762,32 @@ body.private .donut svg {
 .flow-edit { border:1px solid var(--line); border-radius:8px; padding:14px; margin:14px 0; }
 .flow-edit legend { font-size:13px; }
 .flow-transaction { padding:9px 0; font-size:11px; max-width:350px; white-space:normal; }
+
+/* Monthly cash statement: totals remain visible beside expandable evidence. */
+.statement-panel { margin-bottom: 24px; }
+.statement-detail { width: 100%; min-width: 0; }
+.statement-detail th, .statement-detail td { vertical-align: top; }
+.statement-detail td:first-child { overflow-wrap: anywhere; }
+.statement-detail td:last-child { white-space: nowrap; }
+.statement-detail summary { cursor: pointer; min-height: 44px; padding: 8px 0; }
+.statement-detail summary small, .statement-status { display: block; font-size: .8rem; color: var(--ink); opacity: .8; }
+.statement-total { background: var(--bg); font-size: 1.05rem; }
+.statement-section th, .statement-section td { padding-top: 24px; font-weight: 700; }
+.statement-transactions { padding-bottom: 12px; }
+.statement-window { display: flex; align-items: center; gap: 12px; }
+.statement-window select { min-height: 44px; }
+.statement-averages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; padding-top: 16px; }
+.statement-history { font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) {
+  .statement-averages { grid-template-columns: 1fr; }
+  .statement-detail th, .statement-detail td { padding-left: 8px; padding-right: 8px; }
+  .statement-detail .flow-transaction { display: flex; flex-wrap: wrap; gap: 8px; }
+  .statement-window { flex-wrap: wrap; }
+}
+
+.statement-detail { table-layout: fixed; }
+.statement-detail th:first-child, .statement-detail td:first-child { width: 64%; white-space: normal; }
+.statement-detail .flow-transaction { white-space: normal; overflow-wrap: anywhere; }
+.statement-detail small { white-space: normal; }
+.statement-history { min-width: 620px; }
+.panel { min-width: 0; }

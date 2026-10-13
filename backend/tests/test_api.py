@@ -75,6 +75,30 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete('/api/transactions/' + identifier + '/classification').status_code, 204)
         self.assertEqual(self.client.get('/api/data').json()['overrides'], [])
 
+    def test_backend_classification_rules_and_worker_access(self):
+        data = self.client.get('/api/data').json()
+        self.assertEqual(data['transactions'][0]['kind'], 'income')
+        self.assertEqual(data['transactions'][0]['group'], 'Salário')
+        self.assertTrue(data['transactions'][0]['classification']['needs_review'])
+        rule = {'name': 'Cliente', 'kind': 'income', 'category': 'Vendas', 'description_contains': 'Cliente'}
+        self.assertEqual(self.client.put('/api/classification/rules/customer', json=rule).status_code, 200)
+        self.assertEqual(self.client.get('/api/classification').json()['rules'][0]['category'], 'Vendas')
+        self.assertEqual(len(self.client.get('/api/backup').json()['classification_rules']), 1)
+        self.assertEqual(self.client.post('/api/classification/claim', json={}).status_code, 403)
+        self.assertEqual(self.client.delete('/api/classification/rules/customer').status_code, 204)
+        self.assertEqual(self.client.put('/api/classification/rules/customer', json={**rule, 'category': 'Salário'}).status_code, 422)
+
+    def test_monthly_statement_and_forecast_validation(self):
+        response = self.client.get('/api/statement?window=6&horizon=3')
+        self.assertEqual(response.status_code, 200)
+        report = response.json()
+        self.assertEqual(report['window'], 6)
+        self.assertEqual(report['horizon'], 3)
+        for row in report['history']:
+            self.assertAlmostEqual(row['opening'] + row['income'] - row['spending'], row['closing'], places=2)
+        self.assertEqual(self.client.get('/api/statement?window=0').status_code, 422)
+        self.assertEqual(self.client.get('/api/statement?horizon=30').status_code, 422)
+
     def test_budget_and_backup(self):
         body = {'lines': [{'nome': 'Casa', 'teto': 1000, 'grupos': ['Moradia']}], 'monthly_income': 5000, 'monthly_saving': 1000, 'benefits_spending': 400}
         self.assertEqual(self.client.put('/api/budget', json=body).status_code, 200)

@@ -122,3 +122,36 @@ O Kaleu existente em `codex-bots` usa `scripts/kaleu-client.py` para ler e alter
 O navegador usa uma fila persistente; `scripts/kaleu-worker.py` consulta a fila de saída no servidor do usuário e executa Codex com a autenticação já existente, em um workspace financeiro separado. Histórico de chat é separado por usuário. Telegram e navegador compartilham dados financeiros, não o histórico privado de conversas. Pedidos interrompidos não são reexecutados automaticamente, pois podem já ter feito alterações. O worker depende do servidor pessoal ligado e conectado. Nenhum desses endpoints executa pagamentos bancários.
 
 Configuração privada: `~/.config/personalbudget/kaleu.json`; variável cloud `PERSONALBUDGET_KALEU_TOKEN`. `scripts/configure-kaleu.py` provisiona os caminhos deste ambiente e o serviço `kaleu-personalbudget.service`. O protocolo e os campos disponíveis estão em `deployment/kaleu/AGENTS.md`.
+
+### Categorização no backend
+
+`GET /api/data` retorna `transactions` já categorizadas. O painel consome esse resultado; `finance` continua contendo a origem bancária. Cada lançamento inclui `classification` com origem (`manual`, `rule`, `bank`, `ai`, `pending`), motivo, confiança quando fornecida pela IA e `needs_review`.
+
+A prioridade é: ajuste manual → regras explícitas → regras de estabelecimento e categoria bancária → IA para casos pendentes. Salários usam as regras privadas de pagador/titular existentes. Transferências próprias, faturas e movimentações patrimoniais não viram receita por decisão da IA. PIX sem finalidade identificável fica em **Receitas a revisar**; a IA pode se abster. Receitas têm categorias próprias: salário, trabalho extra, reembolsos, rendimentos, cashback, aluguéis, vendas e outras receitas.
+
+- `GET /api/classification`: catálogo, regras, pendências e estado da fila.
+- `PUT /api/classification/rules/{id}`: cria/atualiza uma regra; `DELETE` remove. Maior `priority` vence; empate usa o ID. Os critérios presentes são combinados com AND.
+- `PUT /api/transactions/{id}/classification`: confirma uma categoria individual (`income_category` para receita) sem alterar o extrato.
+
+Exemplo de regra:
+
+```json
+{"name":"Vendas da loja","kind":"income","category":"Vendas","priority":200,"description_contains":"Cliente da loja","institution":"Banco"}
+```
+
+Os critérios disponíveis são `description_contains`, `description_exact`, `institution`, `payer_document_root` (8 dígitos do CNPJ) e `method`. É obrigatório informar descrição ou documento. Regras genéricas não atribuem salário. As regras ficam no banco e no backup, com histórico de alterações.
+
+No deploy cloud, a IA fica habilitada por padrão quando o token do Kaleu está configurado. Para desabilitar, defina `PERSONALBUDGET_CLASSIFICATION_AI_ENABLED=0`. Na execução local, habilite com `PERSONALBUDGET_CLASSIFICATION_AI_ENABLED=1`. Mantenha o worker `scripts/kaleu-worker.py` atualizado, autenticado com `PERSONALBUDGET_KALEU_TOKEN`. O worker reutiliza a autenticação Codex já configurada, atende o chat primeiro e depois lotes de até 20 pendências. O backend apenas enfileira; carregar o painel não executa o modelo. Sem habilitação, as regras continuam funcionando e os casos ambíguos permanecem para revisão.
+
+A saída segue um [JSON Schema do Codex](https://developers.openai.com/codex/noninteractive/#create-structured-outputs-with-a-schema) e é validada novamente pelo backend. A IA recebe descrição limitada, categoria bancária, método e categorias permitidas; não recebe saldo ou extrato completo. Ela só devolve categoria, confiança e motivo. Confiança abaixo de 0,9 gera sugestão para revisão; esse número é declarado pelo modelo, não uma garantia estatística. Respostas sem categoria também permanecem pendentes. O cache usa a evidência e as regras: resultados antigos não se aplicam a descrições alteradas. A fila possui leases de 6 minutos, execução de até 5 minutos e até 3 tentativas; erros não alteram valores nem ajustes manuais.
+
+
+### Demonstrativo mensal e média móvel
+
+A tela **Fluxo de caixa** mostra saldo inicial, entradas por tipo, saídas por tipo e saldo final. Financiamento, condomínio, contas residenciais e faturas têm linhas próprias. Cada linha histórica abre seus lançamentos. Transferências próprias, aplicações e resgates são separados das receitas e despesas operacionais, mas entram na reconciliação do caixa. Compras no cartão aparecem no quadro de consumo por categoria; o caixa registra somente o pagamento da fatura.
+
+Os saldos históricos são reconstruídos a partir do saldo das contas bancárias na última coleta; não são saldos históricos fornecidos individualmente pelo banco. Dependem da cobertura do extrato disponível. Lançamentos manuais e saldos patrimoniais declarados não alteram este demonstrativo bancário.
+
+A projeção usa uma média móvel simples de 3, 6 ou 12 meses completos, com meses de valor zero no denominador. Se houver menos meses completos, informa a amostra utilizada; sem nenhum mês completo, não produz previsão. O mês atual combina realizado com o restante positivo até atingir a média de entradas e saídas. O saldo final estimado financia os próximos seis meses; não há previsão de aplicações, resgates, transferências próprias, reajustes ou vencimentos futuros. Projeção é estimativa, não compromisso cadastrado.
+
+`GET /api/statement?window=3&horizon=6` retorna histórico, linhas com evidência, médias por tipo e projeção com saldos encadeados. `GET /api/data` inclui o demonstrativo padrão. O planejamento anterior por ciclo salarial continua acessível pelo botão da tela.

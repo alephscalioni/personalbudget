@@ -13,7 +13,7 @@ from .config import DATABASE
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 actor = ContextVar('finance_actor', default='local')
-FINANCE_KINDS = {'budget','goal','transaction','override','position','cashflow'}
+FINANCE_KINDS = {'budget','goal','transaction','override','position','cashflow','classification-rule','classification-result'}
 
 
 def audit(db, kind, identifier, before, after):

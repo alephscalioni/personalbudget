@@ -12,13 +12,13 @@ from contextlib import asynccontextmanager
 from . import bank_sync
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT, FRONTEND, GENERATOR
 from .models import Budget, Goal, Transaction, TransactionOverride, Position, CashflowPlan
-from . import auth, service, store, kaleu
+from . import auth, service, store, kaleu, classification_api
 
 @asynccontextmanager
 async def lifespan(app):
@@ -32,6 +32,7 @@ async def lifespan(app):
 app = FastAPI(title='Personal Budget', version='3.0.0', lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(kaleu.router)
+app.include_router(classification_api.router)
 refresh_lock = threading.Lock()
 
 
@@ -107,6 +108,12 @@ def data():
         raise HTTPException(404, detail=str(exc)) from exc
     except (ValueError, KeyError, TypeError):
         raise HTTPException(422, detail='O consolidado possui dados inválidos. Confira o arquivo de origem.')
+
+
+@app.get('/api/statement')
+def monthly_statement(window: int = Query(default=3, ge=1, le=12), horizon: int = Query(default=6, ge=1, le=12)):
+    from .statement import build
+    return build(data(), window, horizon)
 
 
 @app.post('/api/refresh', status_code=202)
@@ -197,7 +204,7 @@ def audit_history():
 def backup():
     return JSONResponse({'version': 1, 'exported_at': datetime.now(timezone.utc).isoformat(),
         'budget': store.all_of('budget') or [service.default_budget()],
-        'cashflow_plans': store.all_of('cashflow'), 'positions': store.all_of('position'), 'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override')},
+        'cashflow_plans': store.all_of('cashflow'), 'positions': store.all_of('position'), 'goals': store.all_of('goal'), 'transactions': store.all_of('transaction'), 'overrides': store.all_of('override'), 'classification_rules': store.all_of('classification-rule')},
         headers={'Content-Disposition': 'attachment; filename="personal-budget-backup.json"'})
 
 

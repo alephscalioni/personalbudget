@@ -4,6 +4,7 @@ export const sum = (values) =>
   values.reduce((total, value) => total + Math.round(value * 100), 0) / 100;
 export const expense = (t) =>
   t.kind === "expense" ? t.amount : t.kind === "refund" ? -t.amount : 0;
+
 export function monthSummary(transactions, month) {
   const rows = transactions.filter(
     (t) => (t.competence || t.date.slice(0, 7)) === month,
@@ -81,7 +82,7 @@ export function competenceMonth(transaction, budget = {}) {
 // Cash shows actual bank movements; card purchases affect cash when the bill is paid.
 export function transactionsForBasis(transactions, basis = "cycle", budget = {}) {
   return transactions.filter(t => basis !== "cash" || t.conta_tipo !== "CREDIT").map((t) => {
-    if (basis !== "cash") return { ...t, competence: basis === "cycle" ? cycleMonth(t, budget) : competenceMonth(t, budget) };
+    if (basis !== "cash") return { ...t, competence: basis === "cycle" ? (t.conta_tipo !== "CREDIT" && t.kind === "income" ? cashflowCycle(t, transactions, budget) : cycleMonth(t, budget)) : competenceMonth(t, budget) };
     let kind = t.kind, group = t.group;
     if (t.conta_tipo === "CREDIT") kind = "other";
     else if (!t.manual) {
